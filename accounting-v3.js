@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.25 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.26 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -17,21 +17,9 @@ function maxAbs(a,b){return abs(b)>abs(a)?n(b):n(a)}
 
 function isFullReturnOrder(r){
   const s=t(r.order_status).toLowerCase();
-
-  // Không dùng từ "hoàn" chung chung vì "Đã hoàn tất" = completed,
-  // không phải đơn hoàn/trả hàng.
-  const returnStatusPatterns=[
-    'đã hoàn hàng','hoàn hàng','hoàn trả','đã trả hàng','trả hàng',
-    'đã hoàn tiền','hoàn tiền toàn bộ',
-    'returned','return completed','refund completed','fully refunded'
-  ];
-  const statusReturn=returnStatusPatterns.some(x=>s.includes(x));
-
-  // Nguồn đáng tin hơn: số lượng trả >= số lượng bán.
   const qty=n(r.qty),ret=n(r.return_qty);
-  const qtyReturn=qty>0&&ret>=qty;
-
-  return statusReturn||qtyReturn;
+  if(qty>0&&ret>=qty)return true;
+  return s.includes('hoàn tiền toàn bộ')||s.includes('fully refunded');
 }
 function deriveRevenue(r){
   // Doanh thu phải xuất lấy DUY NHẤT từ file Tất cả đơn hàng:
@@ -39,7 +27,11 @@ function deriveRevenue(r){
   // Phí vận chuyển có thể lặp ở nhiều dòng SKU, parser chỉ lấy 1 lần/order bằng maxAbs.
   const original=n(r.sku_revenue)+n(r.order_shipping_buyer);
   const fullReturn=isFullReturnOrder(r);
-  const expectedAdj=fullReturn ? -original : 0;
+  const hasReturn=n(r.return_qty)>0;
+  const returnGoods=Math.min(Math.abs(n(r.return_revenue_estimate)),Math.abs(n(r.sku_revenue)));
+  // Hoàn toàn bộ: điều chỉnh toàn bộ doanh thu, gồm cả VC người mua.
+  // Hoàn một phần: điều chỉnh phần hàng trả theo từng dòng SKU; chưa tự giảm VC người mua.
+  const expectedAdj=fullReturn ? -original : (hasReturn ? -returnGoods : 0);
   const current=original+expectedAdj;
 
   const first=n(r.invoice_original_issued_amount||r.invoice_new_amount);
@@ -48,7 +40,7 @@ function deriveRevenue(r){
 
   return {
     original,
-    refund: fullReturn ? original : 0,
+    refund: Math.abs(expectedAdj),
     current,
     source:'ORDERS',
     orderOriginal:original,
@@ -86,11 +78,12 @@ function revenueVarianceReason(r){
 
   // Return / adjustment lifecycle first.
   if(d.fullReturn){
-    const returnBasis=(n(r.return_qty)>0&&n(r.qty)>0&&n(r.return_qty)>=n(r.qty))
-      ? 'số lượng trả = toàn bộ số lượng đơn'
-      : 'trạng thái trả/hoàn hàng';
-    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Đơn hoàn toàn bộ ('+returnBasis+') nhưng chưa có HĐ điều chỉnh giảm');
-    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh chưa bằng giá trị cần điều chỉnh của đơn hoàn ('+returnBasis+')');
+    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Hoàn toàn bộ theo số lượng trả nhưng chưa có HĐ điều chỉnh giảm');
+    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh chưa bằng giá trị cần điều chỉnh của đơn hoàn toàn bộ');
+  }else if(n(r.return_qty)>0){
+    const q=n(r.qty),ret=n(r.return_qty);
+    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Hoàn một phần '+ret+'/'+q+' sản phẩm; HĐ cần điều chỉnh dự kiến '+moneyV(r.v3_expected_adjustment));
+    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh thực tế khác HĐ cần điều chỉnh tính theo số lượng trả');
   }
 
   // Shipping-specific clues.
@@ -196,12 +189,14 @@ window.parseOrdersForEngine=async function(file){
   await forEachTableRow(file,['OrderSKUList','Tất cả đơn hàng','Sheet1'],async(rn,row)=>{
     if(!headers){const hm=makeHeaderMap(row);if(hasAnyHeader(hm,known)){headers=row;map=hm;return}if(rn<20)return;headers=row;map=hm;return}
     const id=normalizeId(getBy(row,map,['Order ID','Mã đơn hàng','order_id']));if(!id||id==='Order ID')return;rowCount++;
-    let a=orderMap.get(id);if(!a){a={order_id:id,order_status:'',created:'',delivered:'',creator:'',qty:0,return_qty:0,sku_revenue:0,seller_subtotal_before_discount:0,seller_discount:0,seller_item_discount:0,platform_discount:0,order_shipping_buyer:0,order_amount:0,order_refund_amount:0};orderMap.set(id,a)}
+    let a=orderMap.get(id);if(!a){a={order_id:id,order_status:'',created:'',delivered:'',creator:'',qty:0,return_qty:0,return_revenue_estimate:0,sku_revenue:0,seller_subtotal_before_discount:0,seller_discount:0,seller_item_discount:0,platform_discount:0,order_shipping_buyer:0,order_amount:0,order_refund_amount:0};orderMap.set(id,a)}
     const st=normalizeText(getBy(row,map,['Order Status','Trạng thái đơn']));if(st)a.order_status=st;
     const cr=excelDateToString(getBy(row,map,['Created Time','Thời gian tạo đơn','Ngày tạo đơn'])),dl=excelDateToString(getBy(row,map,['Delivered Time','Ngày đã giao','Ngày giao thành công']));
     if(cr&&(!a.created||dateKey(cr)<dateKey(a.created)))a.created=cr;if(dl&&(!a.delivered||dateKey(dl)>dateKey(a.delivered)))a.delivered=dl;
     const creator=normalizeText(getBy(row,map,['Creator Handle','Affiliate ID','Creator ID']));if(creator)a.creator=creator;
-    a.qty+=nval(getBy(row,map,['Quantity','Số lượng']));a.return_qty+=nval(getBy(row,map,['Sku Quantity of return','SKU Quantity of return','Số lượng trả']));
+    const rowQty=nval(getBy(row,map,['Quantity','Số lượng']));
+    const rowRet=nval(getBy(row,map,['Sku Quantity of return','SKU Quantity of return','Số lượng trả']));
+    a.qty+=rowQty;a.return_qty+=rowRet;
     {
       // Exact mapping verified against the uploaded TikTok OrderSKUList file.
       // Seller revenue ignores SKU Platform Discount.
@@ -213,6 +208,10 @@ window.parseOrdersForEngine=async function(file){
       // Source discounts are positive numbers, therefore subtract SKU Seller Discount.
       const sellerAfter=Math.abs(before)>tol()?before-sellerDisc:afterAll+platformDisc;
       a.sku_revenue+=sellerAfter;
+      if(rowQty>0&&rowRet>0){
+        const retQty=Math.min(Math.abs(rowRet),Math.abs(rowQty));
+        a.return_revenue_estimate+=sellerAfter*(retQty/Math.abs(rowQty));
+      }
       a.seller_subtotal_before_discount+=before;
       a.seller_discount+=-sellerDisc;
       a.seller_item_discount+=0;
@@ -231,7 +230,7 @@ window.buildLiveRows=function(orders,incomes,invoices){
   const rows=oldBuild(orders,incomes,invoices);
   for(const r of rows){
     const o=orders.get(r.order_id),inc=incomes.get(r.order_id);
-    if(o){Object.assign(r,{order_source_present:true,qty:n(o.qty),return_qty:n(o.return_qty),sku_revenue:n(o.sku_revenue),seller_subtotal_before_discount:n(o.seller_subtotal_before_discount),seller_discount:n(o.seller_discount),seller_item_discount:n(o.seller_item_discount),platform_discount:n(o.platform_discount),order_shipping_buyer:n(o.order_shipping_buyer),order_amount:n(o.order_amount),order_refund_amount:n(o.order_refund_amount)})}
+    if(o){Object.assign(r,{order_source_present:true,qty:n(o.qty),return_qty:n(o.return_qty),return_revenue_estimate:n(o.return_revenue_estimate),sku_revenue:n(o.sku_revenue),seller_subtotal_before_discount:n(o.seller_subtotal_before_discount),seller_discount:n(o.seller_discount),seller_item_discount:n(o.seller_item_discount),platform_discount:n(o.platform_discount),order_shipping_buyer:n(o.order_shipping_buyer),order_amount:n(o.order_amount),order_refund_amount:n(o.order_refund_amount)})}
     else r.order_source_present=false;
     r.income_source_present=!!inc;
     if(inc){r.seller_net=n(inc.seller_net);r.buyer_shipping_net=n(inc.buyer_shipping_net)}
@@ -297,6 +296,7 @@ function renderRevenue(){
       '<td>'+esc(r.delivered)+'</td>'+
       '<td><b>'+moneyV(r.v3_revenue_current)+'</b></td>'+
       '<td>'+moneyV(r.v3_invoice_first)+'</td>'+
+      '<td><b>'+moneyV(r.v3_expected_adjustment)+'</b></td>'+
       '<td>'+moneyV(r.v3_invoice_adjustment)+'</td>'+
       '<td>'+moneyV(r.v3_invoice_diff)+'</td>'+
       '<td><b>'+esc(result)+'</b></td>'+
@@ -304,7 +304,7 @@ function renderRevenue(){
       '<td>'+esc(r.v3_variance_reason||'')+'</td>'+
       '<td>'+esc(r.risk_solution||'')+'</td>'+
     '</tr>';
-  }).join('')||'<tr><td colspan="12" class="muted">Không có dữ liệu phù hợp.</td></tr>';
+  }).join('')||'<tr><td colspan="13" class="muted">Không có dữ liệu phù hợp.</td></tr>';
   const states=[...new Set(REV.map(r=>r.v3_invoice_state))].sort(),sel=$('v3RevStatus');
   if(sel){const cur=sel.value;sel.innerHTML='<option value="">Tất cả trạng thái HĐ</option>'+states.map(x=>'<option>'+esc(x)+'</option>').join('');sel.value=cur}
   if($('v3RevCount'))$('v3RevCount').textContent=REV.length.toLocaleString('vi-VN')+' đơn đã giao thuộc kỳ · Trang '+REV_PAGE+'/'+totalPages;
@@ -340,8 +340,8 @@ function install(){
  '<div class="card section"><h3>D. Ma trận rủi ro & phương án xử lý</h3><div class="kpis" style="grid-template-columns:repeat(3,minmax(150px,1fr));margin-bottom:10px"><div class="card kpi"><span class="muted">Rủi ro cao</span><b id="v3High">0</b></div><div class="card kpi"><span class="muted">Rủi ro trung bình</span><b id="v3Med">0</b></div><div class="card kpi"><span class="muted">Rủi ro thấp</span><b id="v3Low">0</b></div></div><div class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số dòng</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3RiskSummary"></tbody></table></div></div>'
  ].join('');
  const inv=$('invoice');if(inv)inv.innerHTML=[
- '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. <b>Doanh thu phải xuất HĐ lấy từ file Tất cả đơn hàng</b> = Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua; Income chỉ dùng cho đối chiếu chi phí/quyết toán.</div></div>',
- '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu phải xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ điều chỉnh</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Lý do chênh lệch</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
+ '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. <b>Doanh thu phải xuất HĐ lấy từ file Tất cả đơn hàng</b> = Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua; Income chỉ dùng cho đối chiếu chi phí/quyết toán. Với đơn hoàn, <b>HĐ cần điều chỉnh</b> được tính từ số lượng trả theo từng dòng SKU: giá trị hàng của dòng × SL trả / SL bán. Hoàn toàn bộ thì điều chỉnh toàn bộ doanh thu; hoàn một phần thì chỉ điều chỉnh phần hàng trả, chưa tự giảm phí VC người mua.</div></div>',
+ '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu phải xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ cần điều chỉnh</th><th>HĐ điều chỉnh thực tế</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Lý do chênh lệch</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
  '<div class="card section"><h2>Income - doanh thu, chi phí & quyết toán TikTok</h2><div class="muted">Kiểm tra đồng thời: <b>(1) doanh thu Income có khớp HĐ đã xuất không</b>; <b>(2) doanh thu + từng loại phí + điều chỉnh có khớp tiền TikTok quyết toán không</b>. Income của đơn khác tháng không bị loại.</div></div>',

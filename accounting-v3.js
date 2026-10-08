@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.5 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.6 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -177,6 +177,182 @@ function install(){
 }
 
 
+
+
+/* ===== V3.6 FAST YEAR STORE: tháng riêng + tổng hợp năm chống trùng ===== */
+const FAST_DB_NAME='NHT_RECON_FAST_DB';
+const FAST_DB_VERSION=1;
+let fastDbPromise=null;
+function openFastDb(){
+  if(fastDbPromise)return fastDbPromise;
+  fastDbPromise=new Promise((resolve,reject)=>{
+    const req=indexedDB.open(FAST_DB_NAME,FAST_DB_VERSION);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains('period_compact')){
+        const st=db.createObjectStore('period_compact',{keyPath:'id'});
+        st.createIndex('company_year','companyYear',{unique:false});
+        st.createIndex('company','company',{unique:false});
+        st.createIndex('year','year',{unique:false});
+      }
+      if(!db.objectStoreNames.contains('annual_light')){
+        db.createObjectStore('annual_light',{keyPath:'id'});
+      }
+    };
+    req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+  });
+  return fastDbPromise;
+}
+function fastPut(store,obj){return openFastDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).put(obj);tx.oncomplete=()=>resolve(obj);tx.onerror=()=>reject(tx.error)}))}
+function fastGet(store,id){return openFastDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(store,'readonly'),rq=tx.objectStore(store).get(id);rq.onsuccess=()=>resolve(rq.result||null);rq.onerror=()=>reject(rq.error)}))}
+function fastGetAll(store){return openFastDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(store,'readonly'),rq=tx.objectStore(store).getAll();rq.onsuccess=()=>resolve(rq.result||[]);rq.onerror=()=>reject(rq.error)}))}
+function dbGetPeriodDirect(id){return openNhtDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction('periods','readonly'),rq=tx.objectStore('periods').get(id);rq.onsuccess=()=>resolve(rq.result||null);rq.onerror=()=>reject(rq.error)}))}
+
+function incomeEventKey(r){
+  return [
+    t(r.order_id),t(r.settlement_date),n(r.seller_net),n(r.buyer_shipping_net),
+    n(r.transaction_fee),n(r.tiktok_commission),n(r.processing_fee),n(r.shipping_net),
+    n(r.affiliate),n(r.partner),n(r.adjustment),n(r.settlement)
+  ].join('|');
+}
+function invoiceEventKey(it){return [t(it.no),t(it.date),t(it.status),n(it.amount)].join('|')}
+function orderCompact(r){
+  return {
+    order_id:t(r.order_id),order_status:t(r.order_status),created:t(r.created),delivered:t(r.delivered),creator:t(r.creator),
+    qty:n(r.qty),return_qty:n(r.return_qty),sku_revenue:n(r.sku_revenue),order_shipping_buyer:n(r.order_shipping_buyer),
+    order_amount:n(r.order_amount),order_refund_amount:n(r.order_refund_amount),order_source_present:!!r.order_source_present
+  };
+}
+function incomeCompact(r){
+  return {
+    key:incomeEventKey(r),order_id:t(r.order_id),income_order_date:t(r.income_order_date||r.created),settlement_date:t(r.settlement_date),
+    seller_net:n(r.seller_net),buyer_shipping_net:n(r.buyer_shipping_net),transaction_fee:n(r.transaction_fee),
+    tiktok_commission:n(r.tiktok_commission),processing_fee:n(r.processing_fee),shipping_net:n(r.shipping_net),
+    affiliate:n(r.affiliate),partner:n(r.partner),adjustment:n(r.adjustment),settlement:n(r.settlement),total_fee_source:n(r.total_fee_source)
+  };
+}
+function buildPeriodCompactV36(rows,m,id){
+  const orders=[],income=[],invoices=[],orderIds=new Set(),seenInv=new Set();
+  for(const r0 of rows){
+    const r=enrich(r0);
+    if(r.order_source_present||r.order_status||r.delivered){orders.push(orderCompact(r));orderIds.add(t(r.order_id))}
+    if(r.income_source_present||abs(r.settlement)>tol()||abs(r.v3_income_revenue)>tol()){
+      income.push(incomeCompact(r));orderIds.add(t(r.order_id));
+    }
+    for(const it of (r.invoice_items||[])){
+      const k=invoiceEventKey(it);if(seenInv.has(k))continue;seenInv.add(k);
+      invoices.push({key:k,order_id:t(r.order_id),no:t(it.no),date:t(it.date),status:t(it.status),amount:n(it.amount)});
+      orderIds.add(t(r.order_id));
+    }
+  }
+  const rr=rows.map(x=>enrich(x));
+  const summary={
+    orderCount:orderIds.size,
+    revenueOriginal:sum(rr,'v3_revenue_original'),refund:sum(rr,'v3_refund'),required:sum(rr,'v3_revenue_current'),
+    invFirst:sum(rr,'v3_invoice_first'),invAdj:sum(rr,'v3_invoice_adjustment'),invTotal:sum(rr,'v3_invoice_total_after_adjustment'),
+    invTotalDiff:sum(rr,'v3_invoice_total_diff'),invEffective:sum(rr,'v3_invoice_effective'),invDiff:sum(rr,'v3_invoice_diff'),
+    sellerNet:sum(rr,'seller_net'),buyerShipping:sum(rr,'buyer_shipping_net'),incomeRevenue:sum(rr,'v3_income_revenue'),
+    transaction:sum(rr,'transaction_fee'),commission:sum(rr,'tiktok_commission'),processing:sum(rr,'processing_fee'),
+    shipping:sum(rr,'shipping_net'),affiliate:sum(rr,'affiliate'),partner:sum(rr,'partner'),adjustment:sum(rr,'adjustment'),
+    feeTotal:sum(rr,'v3_fee_total'),settlement:sum(rr,'settlement'),calcIncome:sum(rr,'v3_settlement_calc_income'),
+    diffIncome:sum(rr,'v3_settlement_diff_income'),calcInvoice:sum(rr,'v3_settlement_calc_invoice'),diffInvoice:sum(rr,'v3_settlement_diff_invoice')
+  };
+  return {id,company:m.company,companyKey:m.company.toUpperCase(),year:m.year,marketplace:m.marketplace,companyYear:m.company.toUpperCase()+'||'+m.year,period:m.period,from:m.from,to:m.to,note:m.note,savedAt:new Date().toISOString(),orders,income,invoices,summary};
+}
+
+function preferOrder(a,b){
+  if(!a)return b;
+  const score=x=>(x.delivered?4:0)+(x.created?2:0)+(x.order_status?2:0)+(abs(x.order_amount)>0?3:0)+(abs(x.sku_revenue)>0?1:0)+(abs(x.order_refund_amount)>0?1:0);
+  return score(b)>=score(a)?b:a;
+}
+function annualLightFromPeriods(periods,meta){
+  const orderMap=new Map(),incomeMap=new Map(),invoiceMap=new Map();
+  const orderPeriods=new Map(),incomeDup=new Map(),invoiceDup=new Map();
+  for(const p of periods){
+    for(const o of(p.orders||[])){
+      const id=t(o.order_id);if(!id)continue;
+      orderMap.set(id,preferOrder(orderMap.get(id),o));
+      if(!orderPeriods.has(id))orderPeriods.set(id,new Set());orderPeriods.get(id).add(p.id);
+    }
+    for(const e of(p.income||[])){
+      if(incomeMap.has(e.key))incomeDup.set(e.key,(incomeDup.get(e.key)||1)+1);
+      else incomeMap.set(e.key,e);
+      const id=t(e.order_id);if(!orderPeriods.has(id))orderPeriods.set(id,new Set());orderPeriods.get(id).add(p.id);
+    }
+    for(const it of(p.invoices||[])){
+      if(invoiceMap.has(it.key))invoiceDup.set(it.key,(invoiceDup.get(it.key)||1)+1);
+      else invoiceMap.set(it.key,it);
+      const id=t(it.order_id);if(!orderPeriods.has(id))orderPeriods.set(id,new Set());orderPeriods.get(id).add(p.id);
+    }
+  }
+  const incByOrder=new Map(),invByOrder=new Map();
+  for(const e of incomeMap.values()){
+    let a=incByOrder.get(e.order_id);if(!a){a={seller_net:0,buyer_shipping_net:0,transaction_fee:0,tiktok_commission:0,processing_fee:0,shipping_net:0,affiliate:0,partner:0,adjustment:0,settlement:0,total_fee_source:0,income_order_date:'',settlement_date:''};incByOrder.set(e.order_id,a)}
+    for(const k of ['seller_net','buyer_shipping_net','transaction_fee','tiktok_commission','processing_fee','shipping_net','affiliate','partner','adjustment','settlement','total_fee_source'])a[k]+=n(e[k]);
+    if(e.income_order_date&&(!a.income_order_date||dateKey(e.income_order_date)<dateKey(a.income_order_date)))a.income_order_date=e.income_order_date;
+    if(e.settlement_date&&(!a.settlement_date||dateKey(e.settlement_date)>dateKey(a.settlement_date)))a.settlement_date=e.settlement_date;
+  }
+  for(const it of invoiceMap.values()){if(!invByOrder.has(it.order_id))invByOrder.set(it.order_id,[]);invByOrder.get(it.order_id).push(it)}
+  const ids=new Set([...orderMap.keys(),...incByOrder.keys(),...invByOrder.keys()]);
+  const sums={revenueOriginal:0,refund:0,required:0,invFirst:0,invAdj:0,invTotal:0,invTotalDiff:0,invEffective:0,invDiff:0,sellerNet:0,buyerShipping:0,incomeRevenue:0,transaction:0,commission:0,processing:0,shipping:0,affiliate:0,partner:0,adjustment:0,feeTotal:0,settlement:0,calcIncome:0,diffIncome:0,calcInvoice:0,diffInvoice:0};
+  const statusCounts={},riskMap=new Map();
+  for(const id of ids){
+    const o=orderMap.get(id)||{},inc=incByOrder.get(id)||{},items=invByOrder.get(id)||[];
+    const r={order_id:id,...o,...inc,order_source_present:orderMap.has(id),income_source_present:incByOrder.has(id),invoice_items:items};
+    if(typeof recomputeInvoiceFromItems==='function')recomputeInvoiceFromItems(r);
+    enrich(r);
+    const map={revenueOriginal:'v3_revenue_original',refund:'v3_refund',required:'v3_revenue_current',invFirst:'v3_invoice_first',invAdj:'v3_invoice_adjustment',invTotal:'v3_invoice_total_after_adjustment',invTotalDiff:'v3_invoice_total_diff',invEffective:'v3_invoice_effective',invDiff:'v3_invoice_diff',sellerNet:'seller_net',buyerShipping:'buyer_shipping_net',incomeRevenue:'v3_income_revenue',transaction:'transaction_fee',commission:'tiktok_commission',processing:'processing_fee',shipping:'shipping_net',affiliate:'affiliate',partner:'partner',adjustment:'adjustment',feeTotal:'v3_fee_total',settlement:'settlement',calcIncome:'v3_settlement_calc_income',diffIncome:'v3_settlement_diff_income',calcInvoice:'v3_settlement_calc_invoice',diffInvoice:'v3_settlement_diff_invoice'};
+    for(const [k,src] of Object.entries(map))sums[k]+=n(r[src]);
+    statusCounts[r.v3_invoice_state]=(statusCounts[r.v3_invoice_state]||0)+1;
+    for(const x of(r.v3_risks||[])){if(!riskMap.has(x.code))riskMap.set(x.code,{...x,count:0});riskMap.get(x.code).count++}
+  }
+  let crossPeriod=0;for(const s of orderPeriods.values())if(s.size>1)crossPeriod++;
+  const duplicateStats={crossPeriodOrders:crossPeriod,duplicateIncomeEvents:incomeDup.size,duplicateInvoiceEvents:invoiceDup.size,uniqueOrders:ids.size,uniqueIncomeEvents:incomeMap.size,uniqueInvoices:invoiceMap.size};
+  return {id:[meta.company.toUpperCase(),meta.marketplace,meta.year].join('||'),company:meta.company,companyKey:meta.company.toUpperCase(),year:meta.year,marketplace:meta.marketplace,periodIds:periods.map(p=>p.id),updatedAt:new Date().toISOString(),summary:sums,statusCounts,risks:[...riskMap.values()],duplicateStats};
+}
+async function rebuildAnnualLightV36(meta){
+  const all=await fastGetAll('period_compact');
+  const periods=all.filter(p=>p.companyKey===meta.company.toUpperCase()&&Number(p.year)===Number(meta.year)&&p.marketplace===meta.marketplace);
+  const a=annualLightFromPeriods(periods,meta);await fastPut('annual_light',a);return a;
+}
+
+window.saveCurrentPeriod=async function(showMessage=true){
+  const rows=(window.__CURRENT_PERIOD_ROWS?.length?window.__CURRENT_PERIOD_ROWS:(liveResultState?.rows||[]));
+  const m=currentPeriodMeta();
+  if(!rows.length){if(showMessage)alert('Chưa có kết quả để lưu.');return false}
+  if(!m.company||!m.year||!m.period){if(showMessage)alert('Vui lòng nhập Tên công ty, Năm dữ liệu và Tên kỳ.');return false}
+  const id=[m.company.toUpperCase(),m.marketplace,m.year,m.period.toUpperCase()].join('||');
+  const existing=await dbGetPeriodDirect(id);
+  const counts={};for(const r of rows)counts[r.result]=(counts[r.result]||0)+1;
+  const summary={orderCount:new Set(rows.map(r=>r.order_id).filter(Boolean)).size,requiredInvoice:sum(rows,'v3_revenue_current'),settlement:sum(rows,'settlement'),statusCounts:counts};
+  await dbPutPeriod({id,company:m.company,companyKey:m.company.toUpperCase(),year:m.year,companyYear:m.company.toUpperCase()+'||'+m.year,period:m.period,from:m.from,to:m.to,marketplace:m.marketplace,note:m.note,savedAt:new Date().toISOString(),createdAt:existing?.createdAt||new Date().toISOString(),summary,rows});
+  await fastPut('period_compact',buildPeriodCompactV36(rows,m,id));
+  await rebuildAnnualLightV36(m);
+  await refreshAnnualSelectors();
+  if(showMessage)alert(existing?'Đã cập nhật kỳ. Tổng hợp năm đã rebuild bằng dữ liệu chống trùng.':'Đã lưu kỳ. Tổng hợp năm đã cập nhật bằng dữ liệu chống trùng.');
+  return true;
+};
+
+window.loadLastAnnualOnOpen=async function(){
+  loadFormulaInputs?.();
+  const compact=await fastGetAll('period_compact');
+  if(!compact.length)return;
+  const last=compact.slice().sort((a,b)=>String(b.savedAt).localeCompare(String(a.savedAt)))[0];
+  const v=(id,val)=>{const e=$(id);if(e)e.value=val||''};v('companyName',last.company);v('dataYear',last.year);v('marketplaceSelect',last.marketplace);v('periodName',last.period);v('fromDate',last.from);v('toDate',last.to);
+  const detail=await dbGetPeriodDirect(last.id);
+  if(detail?.rows?.length){window.__CURRENT_PERIOD_ROWS=detail.rows;liveResultState.rows=detail.rows;liveResultState.invoiceRows=detail.rows;liveResultState.feesRows=detail.rows;enrichRows();renderDashboard();renderRevenue();renderCost()}
+  await refreshAnnualSelectors();
+};
+
+async function ensureCompactMigrationV36(){
+  const existing=await fastGetAll('period_compact');if(existing.length)return;
+  const old=await dbGetAllPeriods();
+  for(const p of old){if(!Array.isArray(p.rows)||!p.rows.length)continue;const m={company:p.company,year:p.year,marketplace:p.marketplace,period:p.period,from:p.from,to:p.to,note:p.note};await fastPut('period_compact',buildPeriodCompactV36(p.rows,m,p.id))}
+  const groups=new Map();for(const p of await fastGetAll('period_compact')){const k=[p.companyKey,p.marketplace,p.year].join('||');if(!groups.has(k))groups.set(k,{company:p.company,year:p.year,marketplace:p.marketplace})}
+  for(const m of groups.values())await rebuildAnnualLightV36(m);
+}
+
+
 /* ===== V3.4 TỔNG HỢP NĂM CHI TIẾT ===== */
 function installAnnualV34(){
   const sec=$('annual'); if(!sec)return;
@@ -184,7 +360,7 @@ function installAnnualV34(){
     '<div class="card section"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Tổng hợp năm - kiểm soát kế toán</h2><div class="muted">Tổng hợp theo dữ liệu đã lưu trong năm. Tách 3 lớp: Doanh thu & HĐ, Income & chi phí, Quyết toán TikTok. Các đơn Income khác tháng vẫn được giữ theo Order ID.</div></div><div><button class="btn" onclick="exportDatabaseBackup()">Sao lưu dữ liệu</button> <label class="btn" style="cursor:pointer">Khôi phục dữ liệu<input type="file" id="restoreDbFile" accept=".json" style="display:none" onchange="restoreDatabaseBackup(this.files[0])"></label></div></div></div>',
     '<div class="card section"><div class="grid3"><div><label class="muted">Công ty</label><select id="annualCompany" onchange="renderAnnualSummary()"><option value="">Chọn công ty</option></select></div><div><label class="muted">Năm</label><select id="annualYear" onchange="renderAnnualSummary()"><option value="">Chọn năm</option></select></div><div><label class="muted">Sàn</label><select id="annualMarketplace" onchange="renderAnnualSummary()"><option value="">Tất cả sàn</option><option value="tiktok">TikTok Shop</option><option value="shopee">Shopee</option><option value="custom">Sàn tùy chỉnh</option></select></div></div><div class="grid3" style="margin-top:10px"><div><label class="muted">Từ ngày</label><input id="annualFrom" type="date" onchange="renderAnnualSummary()"></div><div><label class="muted">Đến ngày</label><input id="annualTo" type="date" onchange="renderAnnualSummary()"></div><div><label class="muted">Tìm tên kỳ</label><input id="annualPeriodText" placeholder="Ví dụ: Tháng 9" oninput="renderAnnualSummary()"></div></div><div style="margin-top:10px"><button class="btn" onclick="clearAnnualFilters()">Xóa bộ lọc</button> <button class="btn primary" onclick="exportAnnualRows()">Xuất dữ liệu năm</button></div></div>',
     '<div class="kpis section" style="grid-template-columns:repeat(4,minmax(160px,1fr))"><div class="card kpi"><span class="muted">Số kỳ đã lưu</span><b id="annualPeriods">0</b></div><div class="card kpi"><span class="muted">Order ID duy nhất</span><b id="annualOrders">0</b></div><div class="card kpi"><span class="muted">Doanh thu phải xuất HĐ</span><b id="annualRequired">0</b></div><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="annualSettlement">0</b></div></div>',
-    '<div class="card section"><h3>A. Doanh thu & vòng đời hóa đơn năm</h3><div class="tablewrap"><table><tbody><tr><td>Giá trị đơn gốc (Orders)</td><td id="annualOrderOriginal">0</td></tr><tr><td>Hoàn đơn</td><td id="annualOrderRefund">0</td></tr><tr><td><b>Doanh thu phải xuất hiện tại</b></td><td id="annualRequired2"><b>0</b></td></tr><tr><td>HĐ lần đầu</td><td id="annualInvFirst">0</td></tr><tr><td>HĐ điều chỉnh</td><td id="annualInvAdj">0</td></tr><tr><td><b>Tổng HĐ = lần đầu + điều chỉnh</b></td><td id="annualInvTotal"><b>0</b></td></tr><tr><td>Chênh Tổng HĐ - DT cần xuất</td><td id="annualInvTotalDiff">0</td></tr><tr><td>HĐ hiệu lực theo vòng đời</td><td id="annualInvEffective">0</td></tr><tr><td>Chênh HĐ hiệu lực</td><td id="annualInvDiff">0</td></tr></tbody></table></div></div>',
+    '<div class="card section"><h3>Kiểm soát trùng giữa các kỳ</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(160px,1fr))"><div class="card kpi"><span class="muted">Order ID xuất hiện nhiều kỳ</span><b id="annualCrossPeriod">0</b></div><div class="card kpi"><span class="muted">Income bị trùng đã loại</span><b id="annualIncomeDup">0</b></div><div class="card kpi"><span class="muted">Hóa đơn bị trùng đã loại</span><b id="annualInvoiceDup">0</b></div><div class="card kpi"><span class="muted">Order ID duy nhất sau gộp</span><b id="annualUniqueAfterDedupe">0</b></div></div><div class="note" style="margin-top:10px">Order ID xuất hiện ở nhiều kỳ không tự động coi là lỗi: có thể là quyết toán/hoàn/điều chỉnh kỳ sau. Chỉ các sự kiện Income hoặc hóa đơn có cùng khóa sự kiện mới bị loại trùng.</div></div><div class="card section"><h3>A. Doanh thu & vòng đời hóa đơn năm</h3><div class="tablewrap"><table><tbody><tr><td>Giá trị đơn gốc (Orders)</td><td id="annualOrderOriginal">0</td></tr><tr><td>Hoàn đơn</td><td id="annualOrderRefund">0</td></tr><tr><td><b>Doanh thu phải xuất hiện tại</b></td><td id="annualRequired2"><b>0</b></td></tr><tr><td>HĐ lần đầu</td><td id="annualInvFirst">0</td></tr><tr><td>HĐ điều chỉnh</td><td id="annualInvAdj">0</td></tr><tr><td><b>Tổng HĐ = lần đầu + điều chỉnh</b></td><td id="annualInvTotal"><b>0</b></td></tr><tr><td>Chênh Tổng HĐ - DT cần xuất</td><td id="annualInvTotalDiff">0</td></tr><tr><td>HĐ hiệu lực theo vòng đời</td><td id="annualInvEffective">0</td></tr><tr><td>Chênh HĐ hiệu lực</td><td id="annualInvDiff">0</td></tr></tbody></table></div></div>',
     '<div class="card section"><h3>B. Income - doanh thu & chi phí năm</h3><div class="tablewrap"><table><tbody><tr><td>Doanh thu hàng hóa sau hoàn</td><td id="annualSellerNet">0</td></tr><tr><td>VC người mua sau hoàn</td><td id="annualBuyerShipping">0</td></tr><tr><td><b>Doanh thu Income</b></td><td id="annualIncomeRevenue"><b>0</b></td></tr><tr><td>Phí giao dịch</td><td id="annualTransactionFee">0</td></tr><tr><td>Hoa hồng TikTok</td><td id="annualCommission">0</td></tr><tr><td>Phí xử lý đơn hàng</td><td id="annualProcessing">0</td></tr><tr><td>Vận chuyển thuần</td><td id="annualShippingNet">0</td></tr><tr><td>Affiliate</td><td id="annualAffiliate">0</td></tr><tr><td>Đối tác liên kết</td><td id="annualPartner">0</td></tr><tr><td>Điều chỉnh</td><td id="annualAdjustment">0</td></tr><tr><td><b>Tổng chi phí chi tiết</b></td><td id="annualFeeTotal"><b>0</b></td></tr></tbody></table></div></div>',
     '<div class="card section"><h3>C. Kiểm tra tiền quyết toán năm</h3><div class="tablewrap"><table><tbody><tr><td><b>TikTok quyết toán thực tế</b></td><td id="annualSettlement2"><b>0</b></td></tr><tr><td>DT Income + phí + điều chỉnh</td><td id="annualCalcIncome">0</td></tr><tr><td>Chênh quyết toán theo Income</td><td id="annualDiffIncome">0</td></tr><tr><td>HĐ hiệu lực + phí + điều chỉnh</td><td id="annualCalcInvoice">0</td></tr><tr><td>Chênh quyết toán theo HĐ</td><td id="annualDiffInvoice">0</td></tr></tbody></table></div></div>',
     '<div class="grid2 section"><div class="card"><h3>D. Tình trạng HĐ trong năm</h3><div id="annualStatusBox" class="formula">Chưa có dữ liệu.</div></div><div class="card"><h3>E. Rủi ro năm & phương án xử lý</h3><div id="annualRiskBox" class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số đơn</th><th>Rủi ro</th><th>Phương án</th></tr></thead><tbody id="annualRiskRows"></tbody></table></div></div></div>',
@@ -250,3 +426,10 @@ window.addEventListener('load',()=>setTimeout(()=>{enrichRows();renderDashboard(
 document.addEventListener('click',e=>{const b=e.target.closest?.('.navbtn');if(!b)return;const p=b.dataset?.page;setTimeout(()=>{if(p==='dashboard')renderDashboard();else if(p==='invoice')renderRevenue();else if(p==='fees')renderCost();else if(p==='annual')renderAnnualSummary();},80)});
 if(typeof loadAnnualIntoViews==='function'){const old=loadAnnualIntoViews;window.loadAnnualIntoViews=function(a){const z=old(a);setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},60);return z}}
 })();
+const __oldLoadStoredPeriodV36=window.loadStoredPeriod;
+window.loadStoredPeriod=async function(id){
+  const x=await dbGetPeriodDirect(id);if(!x)return;
+  const v=(id,val)=>{const e=$(id);if(e)e.value=val||''};v('companyName',x.company);v('dataYear',x.year);v('periodName',x.period);v('fromDate',x.from);v('toDate',x.to);v('periodNote',x.note);v('marketplaceSelect',x.marketplace);
+  window.__CURRENT_PERIOD_ROWS=x.rows||[];liveResultState.rows=x.rows||[];liveResultState.invoiceRows=liveResultState.rows;liveResultState.feesRows=liveResultState.rows;enrichRows();renderDashboard();renderRevenue();renderCost();document.querySelector('[data-page="dashboard"]')?.click();
+};
+document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>ensureCompactMigrationV36().then(()=>refreshAnnualSelectors()).catch(console.error),1800));

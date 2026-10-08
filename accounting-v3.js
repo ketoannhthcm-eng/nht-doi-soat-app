@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.17 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.18 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -26,7 +26,7 @@ function deriveRevenue(r){
   // Doanh thu phải xuất lấy DUY NHẤT từ file Tất cả đơn hàng:
   // Tổng phụ sau giảm giá của người bán + phí vận chuyển của người mua.
   // Phí vận chuyển có thể lặp ở nhiều dòng SKU, parser chỉ lấy 1 lần/order bằng maxAbs.
-  const original=n(r.sku_revenue)+n(r.platform_discount)+n(r.order_shipping_buyer);
+  const original=n(r.sku_revenue)+n(r.order_shipping_buyer);
   const fullReturn=isFullReturnOrder(r);
   const expectedAdj=fullReturn ? -original : 0;
   const current=original+expectedAdj;
@@ -81,7 +81,6 @@ function revenueVarianceReason(r){
 
   // Shipping-specific clues.
   const ship=n(r.order_shipping_buyer),platformDiscount=n(r.platform_discount);
-  if(abs(abs(diff)-abs(platformDiscount))<=T && abs(platformDiscount)>T) parts.push('Chênh đúng bằng giảm giá mặt hàng do TikTok Shop chi trả; khoản này không làm giảm doanh thu người bán');
   if(abs(abs(diff)-abs(ship))<=T && abs(ship)>T) parts.push('Chênh đúng bằng phí vận chuyển người mua');
   const orderAmt=n(r.order_amount), calc=n(r.sku_revenue)+ship;
   const orderGap=calc-orderAmt;
@@ -571,8 +570,8 @@ window.traceOrder=function(){
     '</tbody></table></div></div>'+
     '<div class="card section"><h3>App tính theo logic hiện hành</h3><div class="formula">'+
       'Nguồn doanh thu phải xuất = <b>TẤT CẢ ĐƠN HÀNG</b><br>'+
-      'Doanh thu phải xuất = Tổng phụ sau giảm giá + Giảm giá TikTok Shop chi trả + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
-      '= '+moneyV(r.sku_revenue||0)+' + '+moneyV(r.platform_discount||0)+' + '+moneyV(r.order_shipping_buyer||0)+' = <b>'+moneyV(r.v3_revenue_original)+'</b><br>'+
+      'Doanh thu phải xuất = Tổng phụ sau giảm giá hiện có + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
+      '= '+moneyV(r.sku_revenue||0)+' + '+moneyV(r.order_shipping_buyer||0)+' = <b>'+moneyV(r.v3_revenue_original)+'</b><br>'+
       (isFullReturnOrder(r)?'Đơn hoàn toàn bộ ⇒ Doanh thu cần điều chỉnh = -'+moneyV(r.v3_revenue_original)+'<br>':'')+
       '⇒ <b>Doanh thu hiện tại sau điều chỉnh = '+moneyV(r.v3_revenue_current)+'</b><br><br>'+
       'HĐ hiệu lực = <b>'+moneyV(invoiceEffective)+'</b><br>'+

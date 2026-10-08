@@ -242,9 +242,9 @@ summary{cursor:pointer;font-weight:700;color:#76503E!important}
       <input id="loginEmail" type="email" placeholder="Email" value="acc20.ketoannht.hcm@gmail.com">
       <input id="loginPass" type="password" placeholder="Mật khẩu" value="admin123">
       <button class="btn primary" onclick="login()">Đăng nhập</button>
-      <button class="btn" onclick="sendPasswordReset()">Quên mật khẩu / Gửi link đặt lại</button>
+      <button id="forgotPasswordBtn" type="button" class="btn">Quên mật khẩu / Gửi link đặt lại</button>
       <button class="btn" onclick="demoUser()">Vào bản xem trước với quyền người dùng</button>
-      <div class="muted">Demo Admin lần đầu: acc20.ketoannht.hcm@gmail.com / admin123 (có thể đổi trong mục Tài khoản của tôi)</div>
+      <div class="muted">Đăng nhập bằng tài khoản Firebase đã xác thực email.</div>
     </div>
     <div id="registerForm" class="form hidden">
       <input id="regName" placeholder="Họ và tên">
@@ -1530,7 +1530,7 @@ summary{cursor:pointer;font-weight:700;color:#76503E!important}
           <label class="muted">Nhập lại mật khẩu mới</label>
           <input id="confirmPassword" type="password" placeholder="Nhập lại mật khẩu mới">
           <button class="btn primary" onclick="changePassword()">Đổi mật khẩu</button>
-          <button class="btn" onclick="sendPasswordReset()">Gửi email đặt lại mật khẩu</button>
+          <button id="accountResetBtn" type="button" class="btn">Gửi email đặt lại mật khẩu</button>
           <div id="passwordMsg" class="note hidden"></div>
         </div>
       </div>
@@ -4640,19 +4640,23 @@ exportAuditLog=function(){
   };
 
   window.sendPasswordReset=async function(){
-    const email=(document.getElementById('loginEmail')?.value||document.getElementById('profileEmail')?.value||'').trim().toLowerCase();
+    const loginEmail=(document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
+    const profileEmail=(document.getElementById('profileEmail')?.value||'').trim().toLowerCase();
+    const email=loginEmail||profileEmail;
     if(!email){
-      if(typeof passwordMsg==='function') return passwordMsg('Nhập email đăng nhập trước.');
-      return authMsg('Nhập email đăng nhập trước.');
+      authMsg('Nhập email đăng nhập trước rồi bấm Quên mật khẩu.');
+      document.getElementById('loginEmail')?.focus();
+      return;
     }
+    authMsg('Đang gửi email đặt lại mật khẩu...');
     try{
-      await auth.sendPasswordResetEmail(email,{url:location.origin});
-      if(typeof passwordMsg==='function' && !document.getElementById('account')?.classList.contains('hidden')) passwordMsg('Đã gửi email đặt lại mật khẩu. Kiểm tra Hộp thư đến / Spam.',true);
-      else authMsg('Đã gửi email đặt lại mật khẩu. Kiểm tra Hộp thư đến / Spam.');
+      await auth.sendPasswordResetEmail(email);
+      authMsg('Đã gửi link đặt lại mật khẩu tới '+email+'. Kiểm tra Hộp thư đến và Spam.');
+      if(typeof passwordMsg==='function' && profileEmail) passwordMsg('Đã gửi link đặt lại mật khẩu tới '+email+'.',true);
     }catch(e){
       const m=friendlyError(e);
-      if(typeof passwordMsg==='function' && !document.getElementById('account')?.classList.contains('hidden')) passwordMsg(m);
-      else authMsg(m);
+      authMsg(m);
+      if(typeof passwordMsg==='function' && profileEmail) passwordMsg(m);
     }
   };
 
@@ -4675,6 +4679,15 @@ exportAuditLog=function(){
       passwordMsg('Đổi mật khẩu thành công.',true);
     }catch(e){ passwordMsg(friendlyError(e)); }
   };
+
+  document.getElementById('forgotPasswordBtn')?.addEventListener('click',async function(e){
+    e.preventDefault(); e.stopPropagation();
+    await window.sendPasswordReset();
+  });
+  document.getElementById('accountResetBtn')?.addEventListener('click',async function(e){
+    e.preventDefault(); e.stopPropagation();
+    await window.sendPasswordReset();
+  });
 
   auth.onAuthStateChanged(async user=>{
     if(!user)return;

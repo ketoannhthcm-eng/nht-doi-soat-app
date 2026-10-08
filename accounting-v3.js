@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.18 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.19 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -182,18 +182,43 @@ window.parseOrdersForEngine=async function(file){
   await forEachTableRow(file,['OrderSKUList','Tất cả đơn hàng','Sheet1'],async(rn,row)=>{
     if(!headers){const hm=makeHeaderMap(row);if(hasAnyHeader(hm,known)){headers=row;map=hm;return}if(rn<20)return;headers=row;map=hm;return}
     const id=normalizeId(getBy(row,map,['Order ID','Mã đơn hàng','order_id']));if(!id||id==='Order ID')return;rowCount++;
-    let a=orderMap.get(id);if(!a){a={order_id:id,order_status:'',created:'',delivered:'',creator:'',qty:0,return_qty:0,sku_revenue:0,platform_discount:0,order_shipping_buyer:0,order_amount:0,order_refund_amount:0};orderMap.set(id,a)}
+    let a=orderMap.get(id);if(!a){a={order_id:id,order_status:'',created:'',delivered:'',creator:'',qty:0,return_qty:0,sku_revenue:0,seller_subtotal_before_discount:0,seller_discount:0,platform_discount:0,order_shipping_buyer:0,order_amount:0,order_refund_amount:0};orderMap.set(id,a)}
     const st=normalizeText(getBy(row,map,['Order Status','Trạng thái đơn']));if(st)a.order_status=st;
     const cr=excelDateToString(getBy(row,map,['Created Time','Thời gian tạo đơn','Ngày tạo đơn'])),dl=excelDateToString(getBy(row,map,['Delivered Time','Ngày đã giao','Ngày giao thành công']));
     if(cr&&(!a.created||dateKey(cr)<dateKey(a.created)))a.created=cr;if(dl&&(!a.delivered||dateKey(dl)>dateKey(a.delivered)))a.delivered=dl;
     const creator=normalizeText(getBy(row,map,['Creator Handle','Affiliate ID','Creator ID']));if(creator)a.creator=creator;
     a.qty+=nval(getBy(row,map,['Quantity','Số lượng']));a.return_qty+=nval(getBy(row,map,['Sku Quantity of return','SKU Quantity of return','Số lượng trả']));
-    a.sku_revenue+=nval(getBy(row,map,['SKU Subtotal After Discount','SKU Subtotal after discount','Doanh thu sau giảm giá']));
-    a.platform_discount+=Math.abs(nval(getBy(row,map,[
-      'Platform Discount','Platform Discount Amount','TikTok Shop Discount','TikTok Shop Discount Amount',
-      'Giảm giá của TikTok Shop','Giảm giá mặt hàng do TikTok Shop chi trả','Giảm giá do TikTok Shop chi trả',
-      'Platform Product Discount','Platform Product Discount Amount'
-    ])));
+    {
+      const directSellerAfter=nval(getBy(row,map,[
+        'Seller Subtotal After Discount','SKU Subtotal After Seller Discount','SKU Subtotal after seller discount',
+        'Tổng phụ sau giảm giá của người bán','Tổng phụ sau giảm giá người bán','Doanh thu sau giảm giá của người bán'
+      ]));
+      const before=nval(getBy(row,map,[
+        'SKU Subtotal Before Discount','SKU Subtotal before discount','Subtotal Before Discount',
+        'Tổng (các) mặt hàng trước khi giảm giá','Tổng phụ trước giảm giá'
+      ]));
+      const sellerDiscRaw=nval(getBy(row,map,[
+        'Seller Discount','Seller Discount Amount','Seller Product Discount','Seller Product Discount Amount',
+        'Giảm giá mặt hàng do người bán chi trả','Giảm giá của người bán','Giảm giá người bán'
+      ]));
+      const genericAfter=nval(getBy(row,map,[
+        'SKU Subtotal After Discount','SKU Subtotal after discount','Doanh thu sau giảm giá','Subtotal After Discount'
+      ]));
+      const platformRaw=nval(getBy(row,map,[
+        'Platform Discount','Platform Discount Amount','TikTok Shop Discount','TikTok Shop Discount Amount',
+        'Giảm giá của TikTok Shop','Giảm giá mặt hàng do TikTok Shop chi trả','Giảm giá do TikTok Shop chi trả',
+        'Platform Product Discount','Platform Product Discount Amount'
+      ]));
+      const sellerDisc=sellerDiscRaw>0?-sellerDiscRaw:sellerDiscRaw;
+      const platformDisc=Math.abs(platformRaw);
+      let sellerAfter=directSellerAfter;
+      if(Math.abs(sellerAfter)<=tol() && Math.abs(before)>tol()) sellerAfter=before+sellerDisc;
+      if(Math.abs(sellerAfter)<=tol()) sellerAfter=genericAfter+platformDisc;
+      a.sku_revenue+=sellerAfter;
+      a.seller_subtotal_before_discount+=before;
+      a.seller_discount+=sellerDisc;
+      a.platform_discount+=platformDisc;
+    }
     a.order_shipping_buyer=maxAbs(a.order_shipping_buyer,nval(getBy(row,map,['Shipping Fee After Discount','Original Shipping Fee','Phí vận chuyển sau giảm giá'])));
     a.order_amount=maxAbs(a.order_amount,nval(getBy(row,map,['Order Amount','Giá trị đơn hàng'])));
     a.order_refund_amount=maxAbs(a.order_refund_amount,nval(getBy(row,map,['Order Refund Amount','Giá trị hoàn đơn'])));
@@ -207,7 +232,7 @@ window.buildLiveRows=function(orders,incomes,invoices){
   const rows=oldBuild(orders,incomes,invoices);
   for(const r of rows){
     const o=orders.get(r.order_id),inc=incomes.get(r.order_id);
-    if(o){Object.assign(r,{order_source_present:true,qty:n(o.qty),return_qty:n(o.return_qty),sku_revenue:n(o.sku_revenue),platform_discount:n(o.platform_discount),order_shipping_buyer:n(o.order_shipping_buyer),order_amount:n(o.order_amount),order_refund_amount:n(o.order_refund_amount)})}
+    if(o){Object.assign(r,{order_source_present:true,qty:n(o.qty),return_qty:n(o.return_qty),sku_revenue:n(o.sku_revenue),seller_subtotal_before_discount:n(o.seller_subtotal_before_discount),seller_discount:n(o.seller_discount),platform_discount:n(o.platform_discount),order_shipping_buyer:n(o.order_shipping_buyer),order_amount:n(o.order_amount),order_refund_amount:n(o.order_refund_amount)})}
     else r.order_source_present=false;
     r.income_source_present=!!inc;
     if(inc){r.seller_net=n(inc.seller_net);r.buyer_shipping_net=n(inc.buyer_shipping_net)}
@@ -552,8 +577,10 @@ window.traceOrder=function(){
         'Ngày tạo: '+esc(r.created||'—')+'<br>'+
         'Ngày giao: '+esc(r.delivered||'—')+'<br>'+
         'Order Amount: <b>'+moneyV(r.order_amount||0)+'</b><br>'+
-        'DT SKU sau giảm: '+moneyV(r.sku_revenue||0)+'<br>'+
-        'Giảm giá TikTok Shop chi trả: '+moneyV(r.platform_discount||0)+'<br>'+
+        'Tổng trước giảm giá: '+moneyV(r.seller_subtotal_before_discount||0)+'<br>'+
+        'Giảm giá người bán: '+moneyV(r.seller_discount||0)+'<br>'+
+        'Giảm giá TikTok tài trợ: '+moneyV(r.platform_discount||0)+'<br>'+
+        '<b>Tổng phụ sau giảm giá của người bán: '+moneyV(r.sku_revenue||0)+'</b><br>'+
         'VC Orders: '+moneyV(r.order_shipping_buyer||0)+
       '</div></div>'+
       '<div class="card"><h3>Nguồn Income</h3><div class="formula">'+
@@ -570,7 +597,7 @@ window.traceOrder=function(){
     '</tbody></table></div></div>'+
     '<div class="card section"><h3>App tính theo logic hiện hành</h3><div class="formula">'+
       'Nguồn doanh thu phải xuất = <b>TẤT CẢ ĐƠN HÀNG</b><br>'+
-      'Doanh thu phải xuất = Tổng phụ sau giảm giá hiện có + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
+      'Doanh thu phải xuất = Tổng phụ sau giảm giá của người bán + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
       '= '+moneyV(r.sku_revenue||0)+' + '+moneyV(r.order_shipping_buyer||0)+' = <b>'+moneyV(r.v3_revenue_original)+'</b><br>'+
       (isFullReturnOrder(r)?'Đơn hoàn toàn bộ ⇒ Doanh thu cần điều chỉnh = -'+moneyV(r.v3_revenue_original)+'<br>':'')+
       '⇒ <b>Doanh thu hiện tại sau điều chỉnh = '+moneyV(r.v3_revenue_current)+'</b><br><br>'+

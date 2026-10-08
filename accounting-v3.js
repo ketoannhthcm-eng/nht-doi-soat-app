@@ -189,29 +189,22 @@ window.parseOrdersForEngine=async function(file){
     const creator=normalizeText(getBy(row,map,['Creator Handle','Affiliate ID','Creator ID']));if(creator)a.creator=creator;
     a.qty+=nval(getBy(row,map,['Quantity','Số lượng']));a.return_qty+=nval(getBy(row,map,['Sku Quantity of return','SKU Quantity of return','Số lượng trả']));
     {
-      // Exact mapping verified against TikTok OrderSKUList:
-      // SKU Subtotal Before Discount
-      // SKU Platform Discount      -> TikTok/platform funded, EXCLUDED from seller revenue
-      // SKU Seller Discount        -> seller-funded discount, source is positive so subtract it
-      // SKU Subtotal After Discount = Before - Platform - Seller
+      // Exact mapping verified against the uploaded TikTok OrderSKUList file.
+      // Seller revenue ignores SKU Platform Discount.
       const before=nval(getBy(row,map,['SKU Subtotal Before Discount']));
       const platformDisc=Math.abs(nval(getBy(row,map,['SKU Platform Discount'])));
-      const sellerDisc=Math.abs(nval(getBy(row,map,['SKU Seller Discount']));
-      const genericAfter=nval(getBy(row,map,['SKU Subtotal After Discount']));
-
+      const sellerDisc=Math.abs(nval(getBy(row,map,['SKU Seller Discount'])));
+      const afterAll=nval(getBy(row,map,['SKU Subtotal After Discount']));
       // Seller subtotal after seller-funded discount only.
-      // Do NOT deduct SKU Platform Discount.
-      const sellerAfter = Math.abs(before)>tol()
-        ? before - sellerDisc
-        : genericAfter + platformDisc;
-
+      // Source discounts are positive numbers, therefore subtract SKU Seller Discount.
+      const sellerAfter=Math.abs(before)>tol()?before-sellerDisc:afterAll+platformDisc;
       a.sku_revenue+=sellerAfter;
       a.seller_subtotal_before_discount+=before;
       a.seller_discount+=-sellerDisc;
       a.seller_item_discount+=0;
       a.platform_discount+=platformDisc;
     }
-    a.order_shipping_buyer=maxAbs(a.order_shipping_buyer,nval(getBy(row,map,['Shipping Fee After Discount','Original Shipping Fee','Phí vận chuyển sau giảm giá'])));
+    a.order_shipping_buyer=maxAbs(a.order_shipping_buyer,nval(getBy(row,map,['Shipping Fee After Discount'])));
     a.order_amount=maxAbs(a.order_amount,nval(getBy(row,map,['Order Amount','Giá trị đơn hàng'])));
     a.order_refund_amount=maxAbs(a.order_refund_amount,nval(getBy(row,map,['Order Refund Amount','Giá trị hoàn đơn'])));
   },x=>setRunMessage('Đang đọc Tất cả đơn hàng: '+x.toLocaleString('vi-VN')+' dòng...'));

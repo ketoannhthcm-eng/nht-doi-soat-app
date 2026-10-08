@@ -1,4 +1,4 @@
-/* NHT Accounting Ledger V4 - 2026-10-08 */
+/* NHT Accounting Ledger V4.1 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -20,16 +20,32 @@ function invKey(it){return [T(it.no),T(it.date),T(it.status),N(it.amount)].join(
 function incomeKey(r){
   return [T(r.order_id),T(r.settlement_date),N(r.seller_net),N(r.buyer_shipping_net),N(r.transaction_fee),N(r.tiktok_commission),N(r.processing_fee),N(r.shipping_net),N(r.affiliate),N(r.partner),N(r.adjustment),N(r.settlement)].join('|');
 }
-function expectedTikTokInvoice(r){
-  const total=N(r.total_fee_source);
-  // HĐ TikTok dự kiến = Tổng phí Income - Creator/Affiliate - Hoa hồng đối tác.
-  // Dữ liệu phí Income thường âm, trả ra số chi phí dương.
-  if(ABS(total)>0.000001) return Math.abs(total - N(r.affiliate) - N(r.partner));
-  return Math.abs(N(r.transaction_fee)+N(r.tiktok_commission)+N(r.processing_fee)+N(r.shipping_net));
+function costImpact(v){return -N(v)}
+function feeParts(r){
+  const p={
+    transaction:costImpact(r.transaction_fee),
+    commission:costImpact(r.tiktok_commission),
+    processing:costImpact(r.processing_fee),
+    shipping_actual:costImpact(r.shipping_actual),
+    shipping_platform_discount:costImpact(r.shipping_platform_discount),
+    failed_delivery_subsidy:costImpact(r.failed_delivery_subsidy),
+    return_shipping_actual:costImpact(r.return_shipping_actual),
+    affiliate_base:costImpact(r.affiliate_base),
+    affiliate_ads:costImpact(r.affiliate_ads),
+    partner_base:costImpact(r.partner_base),
+    partner_ads:costImpact(r.partner_ads)
+  };
+  p.shipping_net=p.shipping_actual+p.shipping_platform_discount+p.failed_delivery_subsidy+p.return_shipping_actual;
+  p.tiktok_invoice=p.transaction+p.commission+p.processing+p.shipping_net;
+  p.creator=p.affiliate_base+p.affiliate_ads;
+  p.partner=p.partner_base+p.partner_ads;
+  p.total_cost=p.tiktok_invoice+p.creator+p.partner;
+  return p;
 }
-function platformFee(r){return expectedTikTokInvoice(r)}
-function creatorFee(r){return Math.abs(N(r.affiliate))}
-function partnerFee(r){return Math.abs(N(r.partner))}
+function expectedTikTokInvoice(r){return feeParts(r).tiktok_invoice}
+function platformFee(r){return feeParts(r).tiktok_invoice}
+function creatorFee(r){return feeParts(r).creator}
+function partnerFee(r){return feeParts(r).partner}
 function chooseOrder(a,b){
   if(!a)return b;
   const score=x=>(x.delivered?4:0)+(x.created?2:0)+(x.order_status?1:0)+(ABS(x.order_amount)>0?3:0);
@@ -70,7 +86,7 @@ function buildLedger(periods){
   }
   const months=new Map();
   const get=m=>{
-    if(!months.has(m))months.set(m,{month:m,revenue:0,platform_fee:0,creator_fee:0,partner_fee:0,total_cost:0,tiktok_invoice_expected:0,settlement:0,income_lines:0});
+    if(!months.has(m))months.set(m,{month:m,revenue:0,transaction_fee:0,tiktok_commission:0,processing_fee:0,shipping_actual:0,shipping_platform_discount:0,failed_delivery_subsidy:0,return_shipping_actual:0,shipping_net:0,affiliate_base:0,affiliate_ads:0,partner_base:0,partner_ads:0,creator_fee:0,partner_fee:0,platform_fee:0,total_cost:0,tiktok_invoice_expected:0,settlement:0,income_lines:0});
     return months.get(m);
   };
   // Doanh thu: theo ngày HĐ.
@@ -85,8 +101,24 @@ function buildLedger(periods){
   for(const r of incomeEvents){
     const id=T(r.order_id), revMonth=revenueMonthForOrder(id,invoicesByOrder.get(id)||[],orderMap.get(id))||month(r.created)||month(r.settlement_date);
     if(revMonth){
-      const z=get(revMonth),pf=platformFee(r),cf=creatorFee(r),pt=partnerFee(r);
-      z.platform_fee+=pf;z.creator_fee+=cf;z.partner_fee+=pt;z.total_cost+=pf+cf+pt;z.tiktok_invoice_expected+=pf;
+      const z=get(revMonth),p=feeParts(r);
+      z.transaction_fee+=p.transaction;
+      z.tiktok_commission+=p.commission;
+      z.processing_fee+=p.processing;
+      z.shipping_actual+=p.shipping_actual;
+      z.shipping_platform_discount+=p.shipping_platform_discount;
+      z.failed_delivery_subsidy+=p.failed_delivery_subsidy;
+      z.return_shipping_actual+=p.return_shipping_actual;
+      z.shipping_net+=p.shipping_net;
+      z.affiliate_base+=p.affiliate_base;
+      z.affiliate_ads+=p.affiliate_ads;
+      z.partner_base+=p.partner_base;
+      z.partner_ads+=p.partner_ads;
+      z.platform_fee+=p.tiktok_invoice;
+      z.creator_fee+=p.creator;
+      z.partner_fee+=p.partner;
+      z.total_cost+=p.total_cost;
+      z.tiktok_invoice_expected+=p.tiktok_invoice;
     }
     const sm=month(r.settlement_date);
     if(sm){const z=get(sm);z.settlement+=N(r.settlement);z.income_lines++;}
@@ -97,9 +129,18 @@ function journalRows(months){
   const out=[];
   for(const m of months){
     if(ABS(m.revenue)>0.000001)out.push({Thang:m.month,Nghiep_vu:'Doanh thu theo ngày hóa đơn',No:'131 - TikTok',Co:'511 / 3331',So_tien:m.revenue,Can_cu:'Hóa đơn phát hành',Dien_giai:'Ghi nhận doanh thu theo ngày HĐ'});
-    if(m.platform_fee>0.000001)out.push({Thang:m.month,Nghiep_vu:'Trích trước phí TikTok',No:'641/642 - Phí sàn',Co:'335 - Chi phí phải trả',So_tien:m.platform_fee,Can_cu:'Income theo Order ID',Dien_giai:'Match chi phí TikTok về tháng doanh thu; chờ HĐ TikTok'});
-    if(m.creator_fee>0.000001)out.push({Thang:m.month,Nghiep_vu:'Trích trước Creator/Affiliate',No:'641/642 - Creator/Affiliate',Co:'335/3388',So_tien:m.creator_fee,Can_cu:'Income',Dien_giai:'Tách riêng, không nằm trong HĐ TikTok'});
-    if(m.partner_fee>0.000001)out.push({Thang:m.month,Nghiep_vu:'Trích trước hoa hồng đối tác',No:'641/642 - Hoa hồng đối tác',Co:'335/3388',So_tien:m.partner_fee,Can_cu:'Income',Dien_giai:'Tách riêng, không nằm trong HĐ TikTok'});
+    const pushCost=(name,amount,account,invoiceFlag=true)=>{if(Math.abs(amount)>0.000001)out.push({Thang:m.month,Nghiep_vu:name,No:account,Co:'335 - Chi phí phải trả',So_tien:amount,Can_cu:'Income theo Order ID',Dien_giai:(invoiceFlag?'Thuộc HĐ TikTok dự kiến; ':'Không thuộc HĐ TikTok; ')+'match về tháng doanh thu'})};
+    pushCost('Trích trước - Phí giao dịch',m.transaction_fee,'641/642 - Phí giao dịch');
+    pushCost('Trích trước - Hoa hồng TikTok Shop',m.tiktok_commission,'641/642 - Hoa hồng sàn');
+    pushCost('Trích trước - Phí xử lý đơn hàng',m.processing_fee,'641/642 - Phí xử lý');
+    pushCost('Trích trước - Phí vận chuyển thực tế',m.shipping_actual,'641/642 - Phí vận chuyển');
+    pushCost('Trích trước - Chiết khấu VC nền tảng',m.shipping_platform_discount,'641/642 - Phí vận chuyển');
+    pushCost('Trích trước - Trợ cấp giao hàng không thành công',m.failed_delivery_subsidy,'641/642 - Phí vận chuyển');
+    pushCost('Trích trước - Phí vận chuyển trả hàng',m.return_shipping_actual,'641/642 - Phí vận chuyển');
+    pushCost('Trích trước - Hoa hồng liên kết',m.affiliate_base,'641/642 - Creator/Affiliate',false);
+    pushCost('Trích trước - Hoa hồng liên kết quảng cáo',m.affiliate_ads,'641/642 - Creator/Affiliate',false);
+    pushCost('Trích trước - Hoa hồng đối tác liên kết',m.partner_base,'641/642 - Hoa hồng đối tác',false);
+    pushCost('Trích trước - Hoa hồng quảng cáo đối tác',m.partner_ads,'641/642 - Hoa hồng đối tác',false);
     if(ABS(m.settlement)>0.000001)out.push({Thang:m.month,Nghiep_vu:'TikTok quyết toán',No:'112',Co:'131 - TikTok',So_tien:m.settlement,Can_cu:'Tổng settlement file Income',Dien_giai:'Tiền quyết toán = tổng settlement các file Income'});
   }
   return out;
@@ -114,7 +155,7 @@ async function renderAccounting(){
   s('accTikTokInv',ACC_MONTHS.reduce((a,x)=>a+x.tiktok_invoice_expected,0));
   s('accSettlement',ACC_MONTHS.reduce((a,x)=>a+x.settlement,0));
   if($('accContext'))$('accContext').textContent=(ctx.company||'Tất cả công ty')+' · '+(ctx.mp||'Tất cả sàn')+' · '+(ctx.year||'Tất cả năm');
-  if($('accMonthlyBody'))$('accMonthlyBody').innerHTML=ACC_MONTHS.map(x=>'<tr><td>'+escA(x.month)+'</td><td>'+moneyA(x.revenue)+'</td><td>'+moneyA(x.platform_fee)+'</td><td>'+moneyA(x.creator_fee)+'</td><td>'+moneyA(x.partner_fee)+'</td><td>'+moneyA(x.total_cost)+'</td><td><b>'+moneyA(x.tiktok_invoice_expected)+'</b></td><td>'+moneyA(x.settlement)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Chưa có dữ liệu.</td></tr>';
+  if($('accMonthlyBody'))$('accMonthlyBody').innerHTML=ACC_MONTHS.map(x=>'<tr><td>'+escA(x.month)+'</td><td>'+moneyA(x.revenue)+'</td><td>'+moneyA(x.transaction_fee)+'</td><td>'+moneyA(x.tiktok_commission)+'</td><td>'+moneyA(x.processing_fee)+'</td><td>'+moneyA(x.shipping_actual)+'</td><td>'+moneyA(x.shipping_platform_discount)+'</td><td>'+moneyA(x.failed_delivery_subsidy)+'</td><td>'+moneyA(x.return_shipping_actual)+'</td><td>'+moneyA(x.shipping_net)+'</td><td>'+moneyA(x.affiliate_base)+'</td><td>'+moneyA(x.affiliate_ads)+'</td><td>'+moneyA(x.partner_base)+'</td><td>'+moneyA(x.partner_ads)+'</td><td><b>'+moneyA(x.tiktok_invoice_expected)+'</b></td><td>'+moneyA(x.total_cost)+'</td><td>'+moneyA(x.settlement)+'</td></tr>').join('')||'<tr><td colspan="17" class="muted">Chưa có dữ liệu.</td></tr>';
   if($('accJournalBody'))$('accJournalBody').innerHTML=ACC_JOURNAL.map(x=>'<tr><td>'+escA(x.Thang)+'</td><td>'+escA(x.Nghiep_vu)+'</td><td>'+escA(x.No)+'</td><td>'+escA(x.Co)+'</td><td>'+moneyA(x.So_tien)+'</td><td>'+escA(x.Can_cu)+'</td><td>'+escA(x.Dien_giai)+'</td></tr>').join('')||'<tr><td colspan="7" class="muted">Chưa có bút toán.</td></tr>';
 }
 window.renderAccountingV4=renderAccounting;
@@ -126,7 +167,7 @@ function install(){
     '<div class="card section"><h2>Phân hệ hạch toán / sổ sách</h2><div class="muted"><b>Doanh thu:</b> theo ngày HĐ. <b>Chi phí:</b> match về tháng doanh thu của Order ID; nếu tháng sau mới quyết toán vẫn trích trước tại tháng doanh thu. <b>Tiền quyết toán:</b> đúng bằng tổng settlement của các file Income.</div></div>',
     '<div class="card section"><div class="grid3"><div><label class="muted">Công ty</label><input id="accCompany"></div><div><label class="muted">Năm</label><input id="accYear" type="number"></div><div><label class="muted">Sàn</label><select id="accMarketplace"><option value="tiktok">TikTok</option><option value="shopee">Shopee</option><option value="custom">Khác</option></select></div></div><div style="margin-top:10px"><button class="btn primary" onclick="renderAccountingV4()">Tính lại</button> <button class="btn" onclick="exportAccountingV4()">Xuất tổng hợp tháng</button> <button class="btn" onclick="exportJournalV4()">Xuất bút toán</button> <span id="accContext" class="muted"></span></div></div>',
     '<div class="kpis section" style="grid-template-columns:repeat(4,minmax(160px,1fr))"><div class="card kpi"><span class="muted">Doanh thu theo HĐ</span><b id="accRevenue">0</b></div><div class="card kpi"><span class="muted">Tổng chi phí match DT</span><b id="accCost">0</b></div><div class="card kpi"><span class="muted">HĐ TikTok dự kiến</span><b id="accTikTokInv">0</b></div><div class="card kpi"><span class="muted">Tiền quyết toán Income</span><b id="accSettlement">0</b></div></div>',
-    '<div class="card section"><h3>Tổng hợp theo tháng</h3><div class="note" style="margin-bottom:10px"><b>HĐ TikTok dự kiến = Tổng phí Income - Creator/Affiliate - Hoa hồng đối tác.</b> Phần Creator/Affiliate và đối tác theo dõi riêng, không đưa vào HĐ TikTok.</div><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Doanh thu theo HĐ</th><th>Phí TikTok trích trước</th><th>Creator/Affiliate</th><th>HH đối tác</th><th>Tổng chi phí</th><th>HĐ TikTok dự kiến</th><th>Tiền quyết toán</th></tr></thead><tbody id="accMonthlyBody"></tbody></table></div></div>',
+    '<div class="card section"><h3>Tổng hợp chi phí chi tiết theo tháng</h3><div class="note" style="margin-bottom:10px"><b>HĐ TikTok dự kiến</b> được tổng từ từng khoản TikTok xuất chi tiết: Phí giao dịch + HH TikTok + Phí xử lý + các khoản vận chuyển. <b>Creator/Affiliate và hoa hồng đối tác tách riêng, không đưa vào HĐ TikTok.</b> Khoản chiết khấu/trợ cấp dương trên Income được thể hiện âm ở chi phí vì làm giảm chi phí phải ghi nhận.</div><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Doanh thu theo HĐ</th><th>Phí giao dịch</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thực tế</th><th>CK VC nền tảng</th><th>Trợ cấp giao thất bại</th><th>VC trả hàng</th><th>VC thuần</th><th>Affiliate</th><th>Affiliate Ads</th><th>HH đối tác</th><th>HH QC đối tác</th><th>HĐ TikTok dự kiến</th><th>Tổng chi phí</th><th>Tiền quyết toán</th></tr></thead><tbody id="accMonthlyBody"></tbody></table></div></div>',
     '<div class="card section"><h3>Bút toán gợi ý</h3><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Nghiệp vụ</th><th>Nợ</th><th>Có</th><th>Số tiền</th><th>Căn cứ</th><th>Diễn giải</th></tr></thead><tbody id="accJournalBody"></tbody></table></div><div class="note" style="margin-top:10px">Khi nhận HĐ TikTok thực tế: đối chiếu số HĐ với <b>HĐ TikTok dự kiến</b>, hoàn/đảo khoản trích trước 335 tương ứng và chỉ ghi nhận VAT đầu vào 1331 theo HĐ hợp lệ.</div></div>'
   ].join('');
   if($('accCompany'))$('accCompany').value=$('companyName')?.value||'';

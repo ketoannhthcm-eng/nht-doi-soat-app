@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.3 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.4 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -175,7 +175,77 @@ function install(){
  ].join('');
  renderDashboard();renderRevenue();renderCost();
 }
-document.addEventListener('DOMContentLoaded',()=>setTimeout(install,350));
+
+
+/* ===== V3.4 TỔNG HỢP NĂM CHI TIẾT ===== */
+function installAnnualV34(){
+  const sec=$('annual'); if(!sec)return;
+  sec.innerHTML=[
+    '<div class="card section"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Tổng hợp năm - kiểm soát kế toán</h2><div class="muted">Tổng hợp theo dữ liệu đã lưu trong năm. Tách 3 lớp: Doanh thu & HĐ, Income & chi phí, Quyết toán TikTok. Các đơn Income khác tháng vẫn được giữ theo Order ID.</div></div><div><button class="btn" onclick="exportDatabaseBackup()">Sao lưu dữ liệu</button> <label class="btn" style="cursor:pointer">Khôi phục dữ liệu<input type="file" id="restoreDbFile" accept=".json" style="display:none" onchange="restoreDatabaseBackup(this.files[0])"></label></div></div></div>',
+    '<div class="card section"><div class="grid3"><div><label class="muted">Công ty</label><select id="annualCompany" onchange="renderAnnualSummary()"><option value="">Chọn công ty</option></select></div><div><label class="muted">Năm</label><select id="annualYear" onchange="renderAnnualSummary()"><option value="">Chọn năm</option></select></div><div><label class="muted">Sàn</label><select id="annualMarketplace" onchange="renderAnnualSummary()"><option value="">Tất cả sàn</option><option value="tiktok">TikTok Shop</option><option value="shopee">Shopee</option><option value="custom">Sàn tùy chỉnh</option></select></div></div><div class="grid3" style="margin-top:10px"><div><label class="muted">Từ ngày</label><input id="annualFrom" type="date" onchange="renderAnnualSummary()"></div><div><label class="muted">Đến ngày</label><input id="annualTo" type="date" onchange="renderAnnualSummary()"></div><div><label class="muted">Tìm tên kỳ</label><input id="annualPeriodText" placeholder="Ví dụ: Tháng 9" oninput="renderAnnualSummary()"></div></div><div style="margin-top:10px"><button class="btn" onclick="clearAnnualFilters()">Xóa bộ lọc</button> <button class="btn primary" onclick="exportAnnualRows()">Xuất dữ liệu năm</button></div></div>',
+    '<div class="kpis section" style="grid-template-columns:repeat(4,minmax(160px,1fr))"><div class="card kpi"><span class="muted">Số kỳ đã lưu</span><b id="annualPeriods">0</b></div><div class="card kpi"><span class="muted">Order ID duy nhất</span><b id="annualOrders">0</b></div><div class="card kpi"><span class="muted">Doanh thu phải xuất HĐ</span><b id="annualRequired">0</b></div><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="annualSettlement">0</b></div></div>',
+    '<div class="card section"><h3>A. Doanh thu & vòng đời hóa đơn năm</h3><div class="tablewrap"><table><tbody><tr><td>Giá trị đơn gốc (Orders)</td><td id="annualOrderOriginal">0</td></tr><tr><td>Hoàn đơn</td><td id="annualOrderRefund">0</td></tr><tr><td><b>Doanh thu phải xuất hiện tại</b></td><td id="annualRequired2"><b>0</b></td></tr><tr><td>HĐ lần đầu</td><td id="annualInvFirst">0</td></tr><tr><td>HĐ điều chỉnh</td><td id="annualInvAdj">0</td></tr><tr><td><b>Tổng HĐ = lần đầu + điều chỉnh</b></td><td id="annualInvTotal"><b>0</b></td></tr><tr><td>Chênh Tổng HĐ - DT cần xuất</td><td id="annualInvTotalDiff">0</td></tr><tr><td>HĐ hiệu lực theo vòng đời</td><td id="annualInvEffective">0</td></tr><tr><td>Chênh HĐ hiệu lực</td><td id="annualInvDiff">0</td></tr></tbody></table></div></div>',
+    '<div class="card section"><h3>B. Income - doanh thu & chi phí năm</h3><div class="tablewrap"><table><tbody><tr><td>Doanh thu hàng hóa sau hoàn</td><td id="annualSellerNet">0</td></tr><tr><td>VC người mua sau hoàn</td><td id="annualBuyerShipping">0</td></tr><tr><td><b>Doanh thu Income</b></td><td id="annualIncomeRevenue"><b>0</b></td></tr><tr><td>Phí giao dịch</td><td id="annualTransactionFee">0</td></tr><tr><td>Hoa hồng TikTok</td><td id="annualCommission">0</td></tr><tr><td>Phí xử lý đơn hàng</td><td id="annualProcessing">0</td></tr><tr><td>Vận chuyển thuần</td><td id="annualShippingNet">0</td></tr><tr><td>Affiliate</td><td id="annualAffiliate">0</td></tr><tr><td>Đối tác liên kết</td><td id="annualPartner">0</td></tr><tr><td>Điều chỉnh</td><td id="annualAdjustment">0</td></tr><tr><td><b>Tổng chi phí chi tiết</b></td><td id="annualFeeTotal"><b>0</b></td></tr></tbody></table></div></div>',
+    '<div class="card section"><h3>C. Kiểm tra tiền quyết toán năm</h3><div class="tablewrap"><table><tbody><tr><td><b>TikTok quyết toán thực tế</b></td><td id="annualSettlement2"><b>0</b></td></tr><tr><td>DT Income + phí + điều chỉnh</td><td id="annualCalcIncome">0</td></tr><tr><td>Chênh quyết toán theo Income</td><td id="annualDiffIncome">0</td></tr><tr><td>HĐ hiệu lực + phí + điều chỉnh</td><td id="annualCalcInvoice">0</td></tr><tr><td>Chênh quyết toán theo HĐ</td><td id="annualDiffInvoice">0</td></tr></tbody></table></div></div>',
+    '<div class="grid2 section"><div class="card"><h3>D. Tình trạng HĐ trong năm</h3><div id="annualStatusBox" class="formula">Chưa có dữ liệu.</div></div><div class="card"><h3>E. Rủi ro năm & phương án xử lý</h3><div id="annualRiskBox" class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số đơn</th><th>Rủi ro</th><th>Phương án</th></tr></thead><tbody id="annualRiskRows"></tbody></table></div></div></div>',
+    '<div class="card section"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Các kỳ đã lưu</h2></div><div class="tablewrap"><table><thead><tr><th>Công ty</th><th>Sàn</th><th>Năm</th><th>Kỳ</th><th>Từ ngày</th><th>Đến ngày</th><th>Order ID</th><th>DT cần xuất</th><th>DT Income</th><th>Phí</th><th>Quyết toán</th><th>Lưu lúc</th><th>Thao tác</th></tr></thead><tbody id="annualPeriodRows"><tr><td colspan="13" class="muted">Chưa có dữ liệu.</td></tr></tbody></table></div><div class="note" style="margin-top:10px">Nếu các kỳ đã lưu có khoảng ngày chồng lấn, dữ liệu Income có thể bị cộng trùng. Nên mỗi kỳ dùng khoảng ngày không chồng lấn hoặc chạy lại đúng cùng tên kỳ để cập nhật kỳ cũ.</div></div>'
+  ].join('');
+}
+
+window.renderAnnualSummary=async function(){
+  const all=await dbGetAllPeriods();
+  const arr=annualSelectedPeriods(all);
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=typeof v==='number'?moneyV(v):v};
+  set('annualPeriods',arr.length);
+  let rows=[];
+  try{rows=typeof mergePeriodRows==='function'?mergePeriodRows(arr):arr.flatMap(x=>x.rows||[])}catch(e){rows=arr.flatMap(x=>x.rows||[])}
+  rows=(rows||[]).map(r=>enrich(r));
+  set('annualOrders',new Set(rows.map(r=>r.order_id).filter(Boolean)).size);
+  set('annualRequired',sum(rows,'v3_revenue_current'));
+  set('annualSettlement',sum(rows,'settlement'));
+  set('annualOrderOriginal',sum(rows,'v3_revenue_original'));
+  set('annualOrderRefund',sum(rows,'v3_refund'));
+  set('annualRequired2',sum(rows,'v3_revenue_current'));
+  set('annualInvFirst',sum(rows,'v3_invoice_first'));
+  set('annualInvAdj',sum(rows,'v3_invoice_adjustment'));
+  set('annualInvTotal',sum(rows,'v3_invoice_total_after_adjustment'));
+  set('annualInvTotalDiff',sum(rows,'v3_invoice_total_diff'));
+  set('annualInvEffective',sum(rows,'v3_invoice_effective'));
+  set('annualInvDiff',sum(rows,'v3_invoice_diff'));
+  set('annualSellerNet',sum(rows,'seller_net'));
+  set('annualBuyerShipping',sum(rows,'buyer_shipping_net'));
+  set('annualIncomeRevenue',sum(rows,'v3_income_revenue'));
+  set('annualTransactionFee',sum(rows,'transaction_fee'));
+  set('annualCommission',sum(rows,'tiktok_commission'));
+  set('annualProcessing',sum(rows,'processing_fee'));
+  set('annualShippingNet',sum(rows,'shipping_net'));
+  set('annualAffiliate',sum(rows,'affiliate'));
+  set('annualPartner',sum(rows,'partner'));
+  set('annualAdjustment',sum(rows,'adjustment'));
+  set('annualFeeTotal',sum(rows,'v3_fee_total'));
+  set('annualSettlement2',sum(rows,'settlement'));
+  set('annualCalcIncome',sum(rows,'v3_settlement_calc_income'));
+  set('annualDiffIncome',sum(rows,'v3_settlement_diff_income'));
+  set('annualCalcInvoice',sum(rows,'v3_settlement_calc_invoice'));
+  set('annualDiffInvoice',sum(rows,'v3_settlement_diff_invoice'));
+
+  const counts={};
+  for(const r of rows){const k=r.v3_invoice_state||'KHÔNG XÁC ĐỊNH';counts[k]=(counts[k]||0)+1}
+  if($('annualStatusBox'))$('annualStatusBox').innerHTML=Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k,v])=>esc(k)+': <b>'+v.toLocaleString('vi-VN')+'</b>').join('<br>')||'Chưa có dữ liệu.';
+
+  const rm=new Map();
+  for(const r of rows){for(const x of(r.v3_risks||[])){if(!rm.has(x.code))rm.set(x.code,{...x,count:0});rm.get(x.code).count++}}
+  if($('annualRiskRows'))$('annualRiskRows').innerHTML=[...rm.values()].sort((a,b)=>sev[b.level]-sev[a.level]||b.count-a.count).map(x=>'<tr><td>'+esc(x.code)+'</td><td><span class="badge '+riskBadge(x.level)+'">'+x.level+'</span></td><td>'+x.count.toLocaleString('vi-VN')+'</td><td>'+esc(x.reason)+'</td><td>'+esc(x.solution)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Chưa có dữ liệu.</td></tr>';
+
+  const body=$('annualPeriodRows');
+  if(body)body.innerHTML=arr.sort((a,b)=>(a.from||a.period||'').localeCompare(b.from||b.period||'')).map(x=>{
+    const rr=(x.rows||[]).map(r=>enrich({...r}));
+    return '<tr><td>'+esc(x.company)+'</td><td>'+esc(x.marketplace)+'</td><td>'+esc(x.year)+'</td><td>'+esc(x.period)+'</td><td>'+esc(x.from||'')+'</td><td>'+esc(x.to||'')+'</td><td>'+new Set(rr.map(r=>r.order_id).filter(Boolean)).size.toLocaleString('vi-VN')+'</td><td>'+moneyV(sum(rr,'v3_revenue_current'))+'</td><td>'+moneyV(sum(rr,'v3_income_revenue'))+'</td><td>'+moneyV(sum(rr,'v3_fee_total'))+'</td><td>'+moneyV(sum(rr,'settlement'))+'</td><td>'+esc((x.savedAt||'').replace('T',' ').slice(0,19))+'</td><td><button class="btn" onclick=\'loadStoredPeriod('+JSON.stringify(x.id)+')\'>Mở</button> <button class="btn danger" onclick=\'deleteStoredPeriod('+JSON.stringify(x.id)+')\'>Xóa</button></td></tr>';
+  }).join('')||'<tr><td colspan="13" class="muted">Chưa có dữ liệu phù hợp bộ lọc.</td></tr>';
+};
+
+
+document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{installAnnualV34();install();refreshAnnualSelectors?.().then(()=>renderAnnualSummary()).catch(()=>{})},350));
 window.addEventListener('load',()=>setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},1400));
 document.addEventListener('click',e=>{const b=e.target.closest?.('.navbtn');if(!b)return;setTimeout(()=>{renderDashboard();renderRevenue();renderCost()},120)});
 if(typeof loadAnnualIntoViews==='function'){const old=loadAnnualIntoViews;window.loadAnnualIntoViews=function(a){const z=old(a);setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},60);return z}}

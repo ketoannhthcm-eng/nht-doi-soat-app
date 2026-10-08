@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.22 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.23 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -218,22 +218,18 @@ window.parseOrdersForEngine=async function(file){
       const sellerItemDiscount=sellerItemDiscountRaw>0?-sellerItemDiscountRaw:sellerItemDiscountRaw;
       const platformDisc=Math.abs(platformRaw);
 
-      // Công thức nghiệp vụ:
+      // Công thức nghiệp vụ đã chốt:
       // Tổng phụ sau giảm giá người bán = Tổng trước giảm + Giảm giá người bán + Giảm giá mặt hàng do người bán chi trả.
-      // Nhưng file TikTok có thể không xuất riêng đủ 2 cột giảm giá người bán.
-      // Khi có "SKU Subtotal After Discount" + giảm giá TikTok tài trợ,
-      // khôi phục trực tiếp phần của người bán = genericAfter + platformDisc.
+      // TUYỆT ĐỐI KHÔNG dùng giảm giá TikTok/platform tài trợ để tính doanh thu người bán.
       let sellerAfter=0;
       if(Math.abs(directSellerAfter)>tol()){
         sellerAfter=directSellerAfter;
-      }else if(Math.abs(genericAfter)>tol() && Math.abs(platformDisc)>tol()){
-        sellerAfter=genericAfter+platformDisc;
-      }else if(Math.abs(before)>tol() && (Math.abs(sellerDiscount)>tol() || Math.abs(sellerItemDiscount)>tol())){
+      }else if(Math.abs(before)>tol() || Math.abs(sellerDiscount)>tol() || Math.abs(sellerItemDiscount)>tol()){
         sellerAfter=before+sellerDiscount+sellerItemDiscount;
-      }else if(Math.abs(genericAfter)>tol()){
-        sellerAfter=genericAfter;
       }else{
-        sellerAfter=before+sellerDiscount+sellerItemDiscount;
+        // Chỉ dùng genericAfter khi file không có các cột cấu thành người bán.
+        // Không cộng lại platformDiscount.
+        sellerAfter=genericAfter;
       }
 
       a.sku_revenue+=sellerAfter;
@@ -619,7 +615,7 @@ window.traceOrder=function(){
   const result=Math.abs(diff)<=tol()?'KHỚP':(diff>0?'DƯ HĐ':'THIẾU HĐ');
 
   box.innerHTML=
-    (staleRevenue?'<div class="note section"><b>Dữ liệu Order này được lưu bằng parser cũ.</b> Hãy nạp lại file Tất cả đơn hàng của kỳ để app đọc đúng Tổng phụ sau giảm giá của người bán và phần giảm giá TikTok/người bán.</div>':'')+
+    (staleRevenue?'<div class="note section"><b>Dữ liệu Order này được lưu bằng parser cũ.</b> Hãy nạp lại file Tất cả đơn hàng của kỳ để app đọc đúng Tổng trước giảm giá, Giảm giá người bán và Giảm giá mặt hàng do người bán chi trả. Giảm giá TikTok/Platform không được dùng để tính doanh thu.</div>':'')+
     '<div class="grid2 section">'+
       '<div class="card"><h3>Nguồn Đơn hàng</h3><div class="formula">'+
         'Order ID: <b>'+esc(r.order_id)+'</b><br>'+
@@ -630,7 +626,7 @@ window.traceOrder=function(){
         'Tổng trước giảm giá: '+moneyV(r.seller_subtotal_before_discount||0)+'<br>'+
         'Giảm giá người bán: '+moneyV(r.seller_discount||0)+'<br>'+
         'Giảm giá mặt hàng do người bán chi trả: '+moneyV(r.seller_item_discount||0)+'<br>'+
-        'Giảm giá TikTok tài trợ (không tính vào công thức): '+moneyV(r.platform_discount||0)+'<br>'+
+        'Giảm giá TikTok tài trợ: '+moneyV(r.platform_discount||0)+' <span class="muted">(chỉ tham chiếu, KHÔNG tính doanh thu)</span><br>'+
         '<b>Tổng phụ sau giảm giá của người bán: '+moneyV(r.sku_revenue||0)+'</b><br>'+
         'VC Orders: '+moneyV(r.order_shipping_buyer||0)+
       '</div></div>'+

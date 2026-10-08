@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.14 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.15 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -15,35 +15,44 @@ function esc(v){return typeof escapeHtml==='function'?escapeHtml(v):t(v).replace
 function sum(a,k){return a.reduce((s,r)=>s+n(r[k]),0)}
 function maxAbs(a,b){return abs(b)>abs(a)?n(b):n(a)}
 
+function isFullReturnOrder(r){
+  const s=t(r.order_status).toLowerCase();
+  const statusReturn=s.includes('hoàn')||s.includes('returned')||s.includes('return completed')||s.includes('refund completed');
+  const qty=n(r.qty),ret=n(r.return_qty);
+  const qtyReturn=qty>0&&ret>=qty;
+  return statusReturn||qtyReturn;
+}
 function deriveRevenue(r){
-  let orderOriginal=n(r.order_amount);
-  if(abs(orderOriginal)<=tol()) orderOriginal=n(r.sku_revenue)+n(r.order_shipping_buyer);
-  if(abs(orderOriginal)<=tol() && r.order_source_present && !r.income_source_present && abs(r.required_invoice)>tol()) orderOriginal=n(r.required_invoice);
-  const orderRefund=abs(n(r.order_refund_amount));
-  const orderCurrent=orderOriginal-orderRefund;
-
-  // Income reflects TikTok's actual settlement revenue structure:
-  // seller subtotal after discount + seller refund + buyer shipping + buyer shipping refund.
-  const incomeOriginal=n(r.seller_revenue)+n(r.buyer_shipping_income);
-  const incomeRefundDelta=n(r.seller_refund)+n(r.buyer_shipping_refund);
-  const incomeCurrent=incomeOriginal+incomeRefundDelta;
-  const useIncome=!!r.income_source_present && (abs(incomeOriginal)>tol() || abs(incomeCurrent)>tol());
-
-  const original=useIncome?incomeOriginal:orderOriginal;
-  const refund=useIncome?Math.abs(incomeRefundDelta):orderRefund;
-  const current=useIncome?incomeCurrent:orderCurrent;
-  const source=useIncome?'INCOME':'ORDERS';
+  // Doanh thu phải xuất lấy DUY NHẤT từ file Tất cả đơn hàng:
+  // Tổng phụ sau giảm giá của người bán + phí vận chuyển của người mua.
+  // Phí vận chuyển có thể lặp ở nhiều dòng SKU, parser chỉ lấy 1 lần/order bằng maxAbs.
+  const original=n(r.sku_revenue)+n(r.order_shipping_buyer);
+  const fullReturn=isFullReturnOrder(r);
+  const expectedAdj=fullReturn ? -original : 0;
+  const current=original+expectedAdj;
 
   const first=n(r.invoice_original_issued_amount||r.invoice_new_amount);
   const actualAdj=n(r.invoice_adjustment_amount);
   const effective=n(r.invoice_effective_amount||r.invoice_active_net||r.invoice_amount_all);
-  const expectedAdj=(n(r.invoice_count)>0)?current-first:0;
+
   return {
-    original,refund,current,source,
-    orderOriginal,orderRefund,orderCurrent,
-    incomeOriginal,incomeRefundDelta,incomeCurrent,
-    first,expectedAdj,actualAdj,effective,
-    firstDiff:first-original,currentDiff:effective-current
+    original,
+    refund: fullReturn ? original : 0,
+    current,
+    source:'ORDERS',
+    orderOriginal:original,
+    orderRefund:fullReturn?original:0,
+    orderCurrent:current,
+    incomeOriginal:incomeRevenue(r),
+    incomeRefundDelta:0,
+    incomeCurrent:incomeRevenue(r),
+    first,
+    expectedAdj:(n(r.invoice_count)>0)?expectedAdj:0,
+    actualAdj,
+    effective,
+    firstDiff:first-original,
+    currentDiff:effective-current,
+    fullReturn
   };
 }
 function incomeRevenue(r){return n(r.seller_revenue)+n(r.seller_refund)+n(r.buyer_shipping_income)+n(r.buyer_shipping_refund)}
@@ -237,13 +246,13 @@ function install(){
  const dash=$('dashboard');if(dash)dash.innerHTML=[
  '<div class="card section"><h2>Tổng quan kiểm soát kế toán</h2><div class="muted">Hiển thị đầy đủ doanh thu đơn hàng, vòng đời hóa đơn, từng nhóm chi phí và phép kiểm tra tiền TikTok quyết toán.</div></div>',
  '<div class="card section"><h3>A. Doanh thu theo Tất cả đơn hàng & hóa đơn</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">GT đơn gốc (Order Amount)</span><b id="v3OrdOriginal">0</b></div><div class="card kpi"><span class="muted">Hoàn đơn</span><b id="v3OrdRefund">0</b></div><div class="card kpi"><span class="muted">Doanh thu đối soát hiện tại</span><b id="v3OrdCurrent">0</b></div><div class="card kpi"><span class="muted">HĐ lần đầu</span><b id="v3InvFirst">0</b></div><div class="card kpi"><span class="muted">HĐ điều chỉnh</span><b id="v3InvAdj">0</b></div><div class="card kpi"><span class="muted">Tổng HĐ = lần đầu + điều chỉnh</span><b id="v3InvTotal">0</b></div><div class="card kpi"><span class="muted">Chênh Tổng HĐ - DT cần xuất</span><b id="v3InvTotalDiff">0</b></div><div class="card kpi"><span class="muted">HĐ hiệu lực theo vòng đời</span><b id="v3InvEffective">0</b></div><div class="card kpi"><span class="muted">Chênh HĐ hiệu lực</span><b id="v3InvDiff">0</b></div></div></div>',
- '<div class="card section"><h3>B. Income - cấu thành doanh thu & chi phí quyết toán</h3><div class="note" style="margin-bottom:10px"><b>Doanh thu Income dùng cho kế toán/đối soát = DT hàng sau giảm của người bán + Hoàn tiền của người bán + VC người mua + Hoàn VC người mua.</b></div><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">DT hàng sau giảm</span><b id="v3IncomeGoods">0</b></div><div class="card kpi"><span class="muted">Hoàn hàng</span><b id="v3IncomeRefund">0</b></div><div class="card kpi"><span class="muted">VC người mua</span><b id="v3BuyerShipping">0</b></div><div class="card kpi"><span class="muted">Hoàn VC người mua</span><b id="v3BuyerShippingRefund">0</b></div><div class="card kpi"><span class="muted">Doanh thu Income đối soát</span><b id="v3IncRevenue">0</b></div><div class="card kpi"><span class="muted">Phí giao dịch</span><b id="v3Transaction">0</b></div><div class="card kpi"><span class="muted">Hoa hồng TikTok</span><b id="v3Commission">0</b></div><div class="card kpi"><span class="muted">Phí xử lý</span><b id="v3Processing">0</b></div><div class="card kpi"><span class="muted">VC phí sàn thuần</span><b id="v3Shipping">0</b></div><div class="card kpi"><span class="muted">Affiliate</span><b id="v3Affiliate">0</b></div><div class="card kpi"><span class="muted">Đối tác</span><b id="v3Partner">0</b></div><div class="card kpi"><span class="muted">Điều chỉnh</span><b id="v3Adjust">0</b></div><div class="card kpi"><span class="muted">Phí chi tiết đã map</span><b id="v3FeeTotal">0</b></div><div class="card kpi"><span class="muted">Tổng phí nguồn Income</span><b id="v3FeeSource">0</b></div><div class="card kpi"><span class="muted">Phí khác/chưa map</span><b id="v3FeeUnmapped">0</b></div></div></div>',
- '<div class="card section"><h3>C. Kiểm tra tiền TikTok quyết toán</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="v3Settlement">0</b></div><div class="card kpi"><span class="muted">QT tính từ phí chi tiết</span><b id="v3CalcIncome">0</b></div><div class="card kpi"><span class="muted">Chênh QT phí chi tiết</span><b id="v3DiffIncome">0</b></div><div class="card kpi"><span class="muted">QT chuẩn theo Tổng phí nguồn</span><b id="v3CalcBest">0</b></div><div class="card kpi"><span class="muted">Chênh QT chuẩn</span><b id="v3DiffBest">0</b></div><div class="card kpi"><span class="muted">HĐ đã xuất + phí + ĐC</span><b id="v3CalcInvoice">0</b></div><div class="card kpi"><span class="muted">Chênh QT theo HĐ</span><b id="v3DiffInvoice">0</b></div></div><div class="note" style="margin-top:10px">Phép kiểm chính theo góc nhìn người bán: <b>Doanh thu Income đối soát + Tổng phí nguồn Income + Điều chỉnh = TikTok quyết toán</b>. Các trường phía khách hàng không dùng để xác định doanh thu.</div></div>',
+ '<div class="card section"><h3>B. Income - cấu thành doanh thu & chi phí quyết toán</h3><div class="note" style="margin-bottom:10px"><b>Doanh thu Income dùng cho kế toán/đối soát = DT hàng sau giảm của người bán + Hoàn tiền của người bán + VC người mua + Hoàn VC người mua.</b></div><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">DT hàng sau giảm</span><b id="v3IncomeGoods">0</b></div><div class="card kpi"><span class="muted">Hoàn hàng</span><b id="v3IncomeRefund">0</b></div><div class="card kpi"><span class="muted">VC người mua</span><b id="v3BuyerShipping">0</b></div><div class="card kpi"><span class="muted">Hoàn VC người mua</span><b id="v3BuyerShippingRefund">0</b></div><div class="card kpi"><span class="muted">Doanh thu Income (tham chiếu QT)</span><b id="v3IncRevenue">0</b></div><div class="card kpi"><span class="muted">Phí giao dịch</span><b id="v3Transaction">0</b></div><div class="card kpi"><span class="muted">Hoa hồng TikTok</span><b id="v3Commission">0</b></div><div class="card kpi"><span class="muted">Phí xử lý</span><b id="v3Processing">0</b></div><div class="card kpi"><span class="muted">VC phí sàn thuần</span><b id="v3Shipping">0</b></div><div class="card kpi"><span class="muted">Affiliate</span><b id="v3Affiliate">0</b></div><div class="card kpi"><span class="muted">Đối tác</span><b id="v3Partner">0</b></div><div class="card kpi"><span class="muted">Điều chỉnh</span><b id="v3Adjust">0</b></div><div class="card kpi"><span class="muted">Phí chi tiết đã map</span><b id="v3FeeTotal">0</b></div><div class="card kpi"><span class="muted">Tổng phí nguồn Income</span><b id="v3FeeSource">0</b></div><div class="card kpi"><span class="muted">Phí khác/chưa map</span><b id="v3FeeUnmapped">0</b></div></div></div>',
+ '<div class="card section"><h3>C. Kiểm tra tiền TikTok quyết toán</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="v3Settlement">0</b></div><div class="card kpi"><span class="muted">QT tính từ phí chi tiết</span><b id="v3CalcIncome">0</b></div><div class="card kpi"><span class="muted">Chênh QT phí chi tiết</span><b id="v3DiffIncome">0</b></div><div class="card kpi"><span class="muted">QT chuẩn theo Tổng phí nguồn</span><b id="v3CalcBest">0</b></div><div class="card kpi"><span class="muted">Chênh QT chuẩn</span><b id="v3DiffBest">0</b></div><div class="card kpi"><span class="muted">HĐ đã xuất + phí + ĐC</span><b id="v3CalcInvoice">0</b></div><div class="card kpi"><span class="muted">Chênh QT theo HĐ</span><b id="v3DiffInvoice">0</b></div></div><div class="note" style="margin-top:10px">Phép kiểm chính theo góc nhìn người bán: <b>Doanh thu Income (tham chiếu QT) + Tổng phí nguồn Income + Điều chỉnh = TikTok quyết toán</b>. Các trường phía khách hàng không dùng để xác định doanh thu.</div></div>',
  '<div class="card section"><h3>D. Ma trận rủi ro & phương án xử lý</h3><div class="kpis" style="grid-template-columns:repeat(3,minmax(150px,1fr));margin-bottom:10px"><div class="card kpi"><span class="muted">Rủi ro cao</span><b id="v3High">0</b></div><div class="card kpi"><span class="muted">Rủi ro trung bình</span><b id="v3Med">0</b></div><div class="card kpi"><span class="muted">Rủi ro thấp</span><b id="v3Low">0</b></div></div><div class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số dòng</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3RiskSummary"></tbody></table></div></div>'
  ].join('');
  const inv=$('invoice');if(inv)inv.innerHTML=[
- '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. Doanh thu cần xuất HĐ ưu tiên theo Income khi có dữ liệu; các thông tin kỹ thuật chi tiết vẫn được dùng trong logic đối soát và truy vết.</div></div>',
- '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu cần xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ đã điều chỉnh</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
+ '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. Doanh thu phải xuất HĐ ưu tiên theo Income khi có dữ liệu; các thông tin kỹ thuật chi tiết vẫn được dùng trong logic đối soát và truy vết.</div></div>',
+ '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu phải xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ điều chỉnh</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
  '<div class="card section"><h2>Income - doanh thu, chi phí & quyết toán TikTok</h2><div class="muted">Kiểm tra đồng thời: <b>(1) doanh thu Income có khớp HĐ đã xuất không</b>; <b>(2) doanh thu + từng loại phí + điều chỉnh có khớp tiền TikTok quyết toán không</b>. Income của đơn khác tháng không bị loại.</div></div>',
@@ -511,7 +520,7 @@ window.traceOrder=function(){
         'Hoàn tiền người bán = <b>'+moneyV(sellerRefund)+'</b><br>'+
         'Phí VC người mua = <b>'+moneyV(buyerShip)+'</b><br>'+
         'Hoàn phí VC người mua = <b>'+moneyV(buyerShipRefund)+'</b><br><br>'+
-        '<b>Doanh thu Income đối soát = '+moneyV(incomeRevenueNow)+'</b><br>'+
+        '<b>Doanh thu Income (tham chiếu QT) = '+moneyV(incomeRevenueNow)+'</b><br>'+
         'Settlement = <b>'+moneyV(r.settlement||0)+'</b>'+
       '</div></div>'+
     '</div>'+
@@ -519,12 +528,11 @@ window.traceOrder=function(){
       (invItems.map(i=>'<tr><td>'+esc(i.no||'')+'</td><td>'+esc(i.date||'')+'</td><td>'+esc(i.status||'')+'</td><td>'+moneyV(i.amount||0)+'</td></tr>').join('')||'<tr><td colspan="4" class="muted">Không có dòng hóa đơn.</td></tr>')+
     '</tbody></table></div></div>'+
     '<div class="card section"><h3>App tính theo logic hiện hành</h3><div class="formula">'+
-      'Nguồn doanh thu đối soát = <b>'+esc(basis)+'</b><br>'+
-      (basis==='INCOME'?
-        'Doanh thu cần xuất HĐ = seller_revenue + seller_refund + buyer_shipping_income + buyer_shipping_refund<br>'+
-        '= '+moneyV(sellerGoods)+' + '+moneyV(sellerRefund)+' + '+moneyV(buyerShip)+' + '+moneyV(buyerShipRefund)+'<br>'
-        :'Chưa có Income phù hợp → tạm dùng doanh thu Orders<br>')+
-      '⇒ <b>Doanh thu cần xuất HĐ = '+moneyV(r.v3_revenue_current)+'</b><br><br>'+
+      'Nguồn doanh thu phải xuất = <b>TẤT CẢ ĐƠN HÀNG</b><br>'+
+      'Doanh thu phải xuất = Tổng phụ sau giảm giá người bán + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
+      '= '+moneyV(r.sku_revenue||0)+' + '+moneyV(r.order_shipping_buyer||0)+' = <b>'+moneyV(r.v3_revenue_original)+'</b><br>'+
+      (isFullReturnOrder(r)?'Đơn hoàn toàn bộ ⇒ Doanh thu cần điều chỉnh = -'+moneyV(r.v3_revenue_original)+'<br>':'')+
+      '⇒ <b>Doanh thu hiện tại sau điều chỉnh = '+moneyV(r.v3_revenue_current)+'</b><br><br>'+
       'HĐ hiệu lực = <b>'+moneyV(invoiceEffective)+'</b><br>'+
       'Chênh lệch HĐ = <b>'+moneyV(diff)+'</b><br>'+
       'Kết quả = <b>'+esc(result)+'</b>'+
@@ -546,7 +554,7 @@ const KPI_DRILL_MAP={
   v3IncomeRefund:{label:'Hoàn hàng',field:'v3_income_goods_refund',source:'cost'},
   v3BuyerShipping:{label:'VC người mua',field:'v3_buyer_shipping',source:'cost'},
   v3BuyerShippingRefund:{label:'Hoàn VC người mua',field:'v3_buyer_shipping_refund',source:'cost'},
-  v3IncRevenue:{label:'Doanh thu Income đối soát',field:'v3_income_revenue',source:'cost'},
+  v3IncRevenue:{label:'Doanh thu Income (tham chiếu QT)',field:'v3_income_revenue',source:'cost'},
   v3Transaction:{label:'Phí giao dịch',field:'transaction_fee',source:'cost'},
   v3Commission:{label:'Hoa hồng TikTok',field:'tiktok_commission',source:'cost'},
   v3Processing:{label:'Phí xử lý',field:'processing_fee',source:'cost'},

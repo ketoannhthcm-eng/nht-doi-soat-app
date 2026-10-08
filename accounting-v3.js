@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.13 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.14 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -476,6 +476,60 @@ window.renderAnnualSummary=async function(){
   }).join('')||'<tr><td colspan="13" class="muted">Chưa có dữ liệu phù hợp bộ lọc.</td></tr>';
 };
 
+
+
+/* ===== V3.14 TRACE ORDER: dùng cùng logic đối soát doanh thu hiện hành ===== */
+const __traceOrderLegacyV314 = typeof window.traceOrder==='function' ? window.traceOrder : null;
+window.traceOrder=function(){
+  const id=t(document.getElementById('traceOrderId')?.value);
+  const box=document.getElementById('traceResult');
+  if(!id){if(box)box.innerHTML='<div class="card section"><div class="muted">Vui lòng nhập Order ID.</div></div>';return;}
+  const r=(liveResultState.rows||[]).find(x=>t(x.order_id)===id);
+  if(!r){if(box)box.innerHTML='<div class="card section"><div class="bad badge">Không tìm thấy Order ID</div></div>';return;}
+  enrich(r);
+  const invItems=Array.isArray(r.invoice_items)?r.invoice_items:[];
+  const sellerGoods=n(r.seller_revenue), sellerRefund=n(r.seller_refund), buyerShip=n(r.buyer_shipping_income), buyerShipRefund=n(r.buyer_shipping_refund);
+  const incomeRevenueNow=incomeRevenue(r);
+  const basis=r.v3_revenue_source||'ORDERS';
+  const invoiceEffective=n(r.v3_invoice_effective);
+  const diff=invoiceEffective-n(r.v3_revenue_current);
+  const result=Math.abs(diff)<=tol()?'KHỚP':(diff>0?'DƯ HĐ':'THIẾU HĐ');
+
+  box.innerHTML=
+    '<div class="grid2 section">'+
+      '<div class="card"><h3>Nguồn Đơn hàng</h3><div class="formula">'+
+        'Order ID: <b>'+esc(r.order_id)+'</b><br>'+
+        'Trạng thái: <b>'+esc(r.order_status||'')+'</b><br>'+
+        'Ngày tạo: '+esc(r.created||'—')+'<br>'+
+        'Ngày giao: '+esc(r.delivered||'—')+'<br>'+
+        'Order Amount: <b>'+moneyV(r.order_amount||0)+'</b><br>'+
+        'DT SKU: '+moneyV(r.sku_revenue||0)+'<br>'+
+        'VC Orders: '+moneyV(r.order_shipping_buyer||0)+
+      '</div></div>'+
+      '<div class="card"><h3>Nguồn Income</h3><div class="formula">'+
+        'Tổng phụ sau giảm giá người bán = <b>'+moneyV(sellerGoods)+'</b><br>'+
+        'Hoàn tiền người bán = <b>'+moneyV(sellerRefund)+'</b><br>'+
+        'Phí VC người mua = <b>'+moneyV(buyerShip)+'</b><br>'+
+        'Hoàn phí VC người mua = <b>'+moneyV(buyerShipRefund)+'</b><br><br>'+
+        '<b>Doanh thu Income đối soát = '+moneyV(incomeRevenueNow)+'</b><br>'+
+        'Settlement = <b>'+moneyV(r.settlement||0)+'</b>'+
+      '</div></div>'+
+    '</div>'+
+    '<div class="card section"><h3>Nguồn Hóa đơn</h3><div class="tablewrap"><table><thead><tr><th>Số HĐ</th><th>Ngày</th><th>Trạng thái</th><th>Giá trị</th></tr></thead><tbody>'+
+      (invItems.map(i=>'<tr><td>'+esc(i.no||'')+'</td><td>'+esc(i.date||'')+'</td><td>'+esc(i.status||'')+'</td><td>'+moneyV(i.amount||0)+'</td></tr>').join('')||'<tr><td colspan="4" class="muted">Không có dòng hóa đơn.</td></tr>')+
+    '</tbody></table></div></div>'+
+    '<div class="card section"><h3>App tính theo logic hiện hành</h3><div class="formula">'+
+      'Nguồn doanh thu đối soát = <b>'+esc(basis)+'</b><br>'+
+      (basis==='INCOME'?
+        'Doanh thu cần xuất HĐ = seller_revenue + seller_refund + buyer_shipping_income + buyer_shipping_refund<br>'+
+        '= '+moneyV(sellerGoods)+' + '+moneyV(sellerRefund)+' + '+moneyV(buyerShip)+' + '+moneyV(buyerShipRefund)+'<br>'
+        :'Chưa có Income phù hợp → tạm dùng doanh thu Orders<br>')+
+      '⇒ <b>Doanh thu cần xuất HĐ = '+moneyV(r.v3_revenue_current)+'</b><br><br>'+
+      'HĐ hiệu lực = <b>'+moneyV(invoiceEffective)+'</b><br>'+
+      'Chênh lệch HĐ = <b>'+moneyV(diff)+'</b><br>'+
+      'Kết quả = <b>'+esc(result)+'</b>'+
+    '</div></div>';
+};
 
 /* ===== DASHBOARD KPI DRILL-DOWN V3.7 ===== */
 const KPI_DRILL_MAP={

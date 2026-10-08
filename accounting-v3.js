@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.19 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.20 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -243,6 +243,29 @@ window.buildLiveRows=function(orders,incomes,invoices){
 
 function riskBadge(x){return x==='CAO'?'bad':x==='TRUNG BÌNH'?'warn':'ok'}
 let REV=[],COST=[];let REV_PAGE=1,COST_PAGE=1;const PAGE_SIZE=100;
+
+function v3NeedsRevenueReimport(){
+  const rows=liveResultState?.rows||[];
+  return rows.some(r=>r.order_source_present &&
+    r.seller_subtotal_before_discount===undefined &&
+    r.seller_discount===undefined &&
+    r.platform_discount===undefined);
+}
+function showRevenueDataVersionNotice(){
+  const inv=document.getElementById('invoice');
+  if(!inv)return;
+  let el=document.getElementById('v3RevenueDataNotice');
+  if(!el){
+    el=document.createElement('div');
+    el.id='v3RevenueDataNotice';
+    el.className='note section';
+    inv.insertBefore(el,inv.children[1]||null);
+  }
+  const stale=v3NeedsRevenueReimport();
+  el.style.display=stale?'block':'none';
+  if(stale)el.innerHTML='<b>Dữ liệu kỳ này đang được lưu theo parser cũ.</b> Code đã sửa nhưng các dòng đã lưu không chứa cột giảm giá người bán/TikTok nên không thể tự tính lại chính xác. Vào <b>Tải dữ liệu</b> → chọn lại file <b>Tất cả đơn hàng</b> của kỳ → chạy đối chiếu và lưu lại kỳ. Sau khi nạp lại, doanh thu sẽ dùng đúng <b>Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua</b>.';
+}
+
 function revFilter(){enrichRows();const s=t($('v3RevSearch')?.value).toLowerCase(),st=t($('v3RevStatus')?.value),risk=t($('v3RevRisk')?.value);REV=(liveResultState.rows||[]).filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered)).filter(r=>(!s||t(r.order_id).toLowerCase().includes(s)||t(r.invoice_no).toLowerCase().includes(s))&&(!st||r.v3_invoice_state===st)&&(!risk||r.risk_level===risk))}
 function costFilter(){enrichRows();const s=t($('v3CostSearch')?.value).toLowerCase(),risk=t($('v3CostRisk')?.value),diff=t($('v3CostDiff')?.value),T=tol();COST=(liveResultState.rows||[]).filter(r=>r.income_source_present).filter(r=>{const dIncome=abs(r.v3_invoice_income_diff)>T,dQtIncome=abs(r.v3_settlement_diff_income)>T,dQtBest=abs(r.v3_settlement_diff_best)>T,dQtInvoice=abs(r.v3_settlement_diff_invoice)>T;let okDiff=true;if(diff==='any')okDiff=dIncome||dQtBest||dQtInvoice;else if(diff==='income')okDiff=dIncome;else if(diff==='qtIncome')okDiff=dQtIncome;else if(diff==='qtBest')okDiff=dQtBest;else if(diff==='qtInvoice')okDiff=dQtInvoice;else if(diff==='none')okDiff=!dIncome&&!dQtBest&&!dQtInvoice;return (!s||t(r.order_id).toLowerCase().includes(s))&&(!risk||r.risk_level===risk)&&okDiff})}
 function renderDashboard(){
@@ -260,6 +283,7 @@ function renderDashboard(){
   if($('v3RiskSummary'))$('v3RiskSummary').innerHTML=arr.map(x=>'<tr><td>'+esc(x.code)+'</td><td><span class="badge '+riskBadge(x.level)+'">'+x.level+'</span></td><td>'+x.count.toLocaleString('vi-VN')+'</td><td>'+esc(x.reason)+'</td><td>'+esc(x.solution)+'</td></tr>').join('');
 }
 function renderRevenue(){
+  showRevenueDataVersionNotice();
   revFilter();const b=$('v3RevenueBody');if(!b)return;
   const totalPages=Math.max(1,Math.ceil(REV.length/PAGE_SIZE));
   REV_PAGE=Math.min(Math.max(1,REV_PAGE),totalPages);
@@ -316,7 +340,7 @@ function install(){
  '<div class="card section"><h3>D. Ma trận rủi ro & phương án xử lý</h3><div class="kpis" style="grid-template-columns:repeat(3,minmax(150px,1fr));margin-bottom:10px"><div class="card kpi"><span class="muted">Rủi ro cao</span><b id="v3High">0</b></div><div class="card kpi"><span class="muted">Rủi ro trung bình</span><b id="v3Med">0</b></div><div class="card kpi"><span class="muted">Rủi ro thấp</span><b id="v3Low">0</b></div></div><div class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số dòng</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3RiskSummary"></tbody></table></div></div>'
  ].join('');
  const inv=$('invoice');if(inv)inv.innerHTML=[
- '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. Doanh thu phải xuất HĐ ưu tiên theo Income khi có dữ liệu; các thông tin kỹ thuật chi tiết vẫn được dùng trong logic đối soát và truy vết.</div></div>',
+ '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. <b>Doanh thu phải xuất HĐ lấy từ file Tất cả đơn hàng</b> = Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua; Income chỉ dùng cho đối chiếu chi phí/quyết toán.</div></div>',
  '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu phải xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ điều chỉnh</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Lý do chênh lệch</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
@@ -561,6 +585,7 @@ window.traceOrder=function(){
   const r=(liveResultState.rows||[]).find(x=>t(x.order_id)===id);
   if(!r){if(box)box.innerHTML='<div class="card section"><div class="bad badge">Không tìm thấy Order ID</div></div>';return;}
   enrich(r);
+  const staleRevenue = r.order_source_present && r.seller_subtotal_before_discount===undefined && r.seller_discount===undefined && r.platform_discount===undefined;
   const invItems=Array.isArray(r.invoice_items)?r.invoice_items:[];
   const sellerGoods=n(r.seller_revenue), sellerRefund=n(r.seller_refund), buyerShip=n(r.buyer_shipping_income), buyerShipRefund=n(r.buyer_shipping_refund);
   const incomeRevenueNow=incomeRevenue(r);
@@ -570,6 +595,7 @@ window.traceOrder=function(){
   const result=Math.abs(diff)<=tol()?'KHỚP':(diff>0?'DƯ HĐ':'THIẾU HĐ');
 
   box.innerHTML=
+    (staleRevenue?'<div class="note section"><b>Dữ liệu Order này được lưu bằng parser cũ.</b> Hãy nạp lại file Tất cả đơn hàng của kỳ để app đọc đúng Tổng phụ sau giảm giá của người bán và phần giảm giá TikTok/người bán.</div>':'')+
     '<div class="grid2 section">'+
       '<div class="card"><h3>Nguồn Đơn hàng</h3><div class="formula">'+
         'Order ID: <b>'+esc(r.order_id)+'</b><br>'+

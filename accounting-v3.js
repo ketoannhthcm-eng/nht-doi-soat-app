@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.24 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.25 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -17,9 +17,20 @@ function maxAbs(a,b){return abs(b)>abs(a)?n(b):n(a)}
 
 function isFullReturnOrder(r){
   const s=t(r.order_status).toLowerCase();
-  const statusReturn=s.includes('hoàn')||s.includes('returned')||s.includes('return completed')||s.includes('refund completed');
+
+  // Không dùng từ "hoàn" chung chung vì "Đã hoàn tất" = completed,
+  // không phải đơn hoàn/trả hàng.
+  const returnStatusPatterns=[
+    'đã hoàn hàng','hoàn hàng','hoàn trả','đã trả hàng','trả hàng',
+    'đã hoàn tiền','hoàn tiền toàn bộ',
+    'returned','return completed','refund completed','fully refunded'
+  ];
+  const statusReturn=returnStatusPatterns.some(x=>s.includes(x));
+
+  // Nguồn đáng tin hơn: số lượng trả >= số lượng bán.
   const qty=n(r.qty),ret=n(r.return_qty);
   const qtyReturn=qty>0&&ret>=qty;
+
   return statusReturn||qtyReturn;
 }
 function deriveRevenue(r){
@@ -75,8 +86,11 @@ function revenueVarianceReason(r){
 
   // Return / adjustment lifecycle first.
   if(d.fullReturn){
-    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Đơn hoàn toàn bộ nhưng chưa có HĐ điều chỉnh giảm');
-    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh chưa bằng giá trị cần điều chỉnh của đơn hoàn');
+    const returnBasis=(n(r.return_qty)>0&&n(r.qty)>0&&n(r.return_qty)>=n(r.qty))
+      ? 'số lượng trả = toàn bộ số lượng đơn'
+      : 'trạng thái trả/hoàn hàng';
+    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Đơn hoàn toàn bộ ('+returnBasis+') nhưng chưa có HĐ điều chỉnh giảm');
+    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh chưa bằng giá trị cần điều chỉnh của đơn hoàn ('+returnBasis+')');
   }
 
   // Shipping-specific clues.

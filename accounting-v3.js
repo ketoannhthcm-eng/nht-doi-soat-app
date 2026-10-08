@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.6 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.8 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -27,8 +27,16 @@ function deriveRevenue(r){
   const expectedAdj=(n(r.invoice_count)>0)?current-first:0;
   return {original,refund,current,first,expectedAdj,actualAdj,effective,firstDiff:first-original,currentDiff:effective-current};
 }
-function incomeRevenue(r){return n(r.seller_net)+n(r.buyer_shipping_net)}
-function feeDetailTotal(r){return n(r.transaction_fee)+n(r.tiktok_commission)+n(r.processing_fee)+n(r.shipping_net)+n(r.affiliate)+n(r.partner)}
+function incomeRevenue(r){return n(r.seller_revenue)+n(r.seller_refund)+n(r.buyer_shipping_income)+n(r.buyer_shipping_refund)}
+function feeDetailTotal(r){
+  return n(r.transaction_fee)+n(r.tiktok_commission)+n(r.processing_fee)+
+    n(r.shipping_actual)+n(r.shipping_platform_discount)+n(r.failed_delivery_subsidy)+n(r.return_shipping_actual)+
+    n(r.affiliate_base)+n(r.affiliate_ads)+n(r.partner_base)+n(r.partner_ads)
+}
+function sourceFeeTotal(r){
+  const src=n(r.total_fee_source),mapped=feeDetailTotal(r);
+  return abs(src)>tol()?src:mapped;
+}
 function sourceState(r){if(r.order_source_present&&r.income_source_present)return 'Đơn hàng + Income';if(r.order_source_present)return 'Chỉ Đơn hàng';if(r.income_source_present)return 'Chỉ Income';return 'Không rõ'}
 
 function invoiceState(r,d){
@@ -56,7 +64,8 @@ function risksFor(r){
   if(st==='CẦN ĐIỀU CHỈNH')addRisk(rs,'DT04','CAO','Đơn đã phát sinh hoàn/trả làm giảm nghĩa vụ doanh thu nhưng chưa có hóa đơn điều chỉnh.','Lập hóa đơn điều chỉnh giảm theo hồ sơ hoàn/trả và liên kết đúng hóa đơn gốc.');
   if(st==='ĐIỀU CHỈNH CHƯA KHỚP')addRisk(rs,'DT05','CAO','Đã có hóa đơn điều chỉnh nhưng giá trị điều chỉnh chưa khớp biến động của đơn hàng.','Đối chiếu hóa đơn gốc, số hoàn và hóa đơn điều chỉnh; sửa bằng điều chỉnh bổ sung/thay thế nếu cần.');
   if(r.income_source_present){
-    if(abs(r.v3_settlement_diff_income)>T)addRisk(rs,'QT01','CAO','Doanh thu theo Income + chi phí + điều chỉnh không khớp số TikTok quyết toán.','Truy vết từng khoản phí/điều chỉnh trong Income; kiểm tra thiếu dòng, trùng dòng hoặc cột chưa được map.');
+    if(abs(r.v3_settlement_diff_best)>T)addRisk(rs,'QT01','CAO','Doanh thu Income chuẩn + Tổng phí nguồn + điều chỉnh vẫn không khớp số TikTok quyết toán.','Kiểm tra thiếu/trùng Income hoặc khoản quyết toán ngoài cấu trúc hiện tại.');
+    else if(abs(r.v3_settlement_diff_income)>T)addRisk(rs,'CP01','TRUNG BÌNH','Phí chi tiết đã map chưa đủ để khớp quyết toán nhưng Tổng phí nguồn đã khớp.','Rà soát cột Phí khác/chưa map để bổ sung loại phí chi tiết.');
     if(n(r.invoice_count)>0&&abs(r.v3_invoice_income_diff)>T)addRisk(rs,'DT06','TRUNG BÌNH','Doanh thu đã xuất hóa đơn khác doanh thu TikTok dùng để quyết toán.','Kiểm tra khác kỳ, hoàn/điều chỉnh và vòng đời hóa đơn; xác định chênh lệch thời điểm hay sai số thực tế.');
     if(n(r.invoice_count)>0&&abs(r.v3_settlement_diff_invoice)>T)addRisk(rs,'QT02','TRUNG BÌNH','Lấy doanh thu đã xuất HĐ trừ/cộng các phí sàn vẫn chưa ra tiền TikTok quyết toán.','So sánh doanh thu HĐ với doanh thu Income trước; sau đó kiểm tra phí, hoàn và điều chỉnh.');
     if(abs(n(r.total_fee_source))>T&&abs(n(r.total_fee_source)-n(r.v3_fee_total))>T)addRisk(rs,'CP01','TRUNG BÌNH','Tổng phí nguồn khác tổng cộng các loại phí chi tiết đã map.','Kiểm tra cột phí còn thiếu hoặc phí đang bị cộng trùng.');
@@ -75,9 +84,18 @@ function enrich(r){
   r.v3_invoice_total_diff=r.v3_invoice_total_after_adjustment-r.v3_revenue_current;
   r.v3_invoice_total_check=Math.abs(r.v3_invoice_total_diff)<=tol()?'KHỚP':(r.v3_invoice_total_diff>0?'DƯ HĐ':'THIẾU HĐ');
   r.v3_invoice_diff=d.currentDiff;r.v3_invoice_state=invoiceState(r,d);
-  r.v3_income_revenue=incomeRevenue(r);r.v3_fee_total=feeDetailTotal(r);
+  r.v3_income_goods=n(r.seller_revenue);
+  r.v3_income_goods_refund=n(r.seller_refund);
+  r.v3_buyer_shipping=n(r.buyer_shipping_income);
+  r.v3_buyer_shipping_refund=n(r.buyer_shipping_refund);
+  r.v3_income_revenue=incomeRevenue(r);
+  r.v3_fee_total=feeDetailTotal(r);
+  r.v3_fee_source=sourceFeeTotal(r);
+  r.v3_fee_unmapped=r.v3_fee_source-r.v3_fee_total;
   r.v3_settlement_calc_income=r.v3_income_revenue+r.v3_fee_total+n(r.adjustment);
   r.v3_settlement_diff_income=n(r.settlement)-r.v3_settlement_calc_income;
+  r.v3_settlement_calc_best=r.v3_income_revenue+r.v3_fee_source+n(r.adjustment);
+  r.v3_settlement_diff_best=n(r.settlement)-r.v3_settlement_calc_best;
   r.v3_settlement_calc_invoice=r.v3_invoice_effective+r.v3_fee_total+n(r.adjustment);
   r.v3_settlement_diff_invoice=n(r.settlement)-r.v3_settlement_calc_invoice;
   r.v3_invoice_income_diff=r.v3_invoice_effective-r.v3_income_revenue;
@@ -127,14 +145,15 @@ window.buildLiveRows=function(orders,incomes,invoices){
 function riskBadge(x){return x==='CAO'?'bad':x==='TRUNG BÌNH'?'warn':'ok'}
 let REV=[],COST=[];let REV_PAGE=1,COST_PAGE=1;const PAGE_SIZE=100;
 function revFilter(){enrichRows();const s=t($('v3RevSearch')?.value).toLowerCase(),st=t($('v3RevStatus')?.value),risk=t($('v3RevRisk')?.value);REV=(liveResultState.rows||[]).filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered)).filter(r=>(!s||t(r.order_id).toLowerCase().includes(s)||t(r.invoice_no).toLowerCase().includes(s))&&(!st||r.v3_invoice_state===st)&&(!risk||r.risk_level===risk))}
-function costFilter(){enrichRows();const s=t($('v3CostSearch')?.value).toLowerCase(),risk=t($('v3CostRisk')?.value),diff=t($('v3CostDiff')?.value),T=tol();COST=(liveResultState.rows||[]).filter(r=>r.income_source_present).filter(r=>{const dIncome=abs(r.v3_invoice_income_diff)>T,dQtIncome=abs(r.v3_settlement_diff_income)>T,dQtInvoice=abs(r.v3_settlement_diff_invoice)>T;let okDiff=true;if(diff==='any')okDiff=dIncome||dQtIncome||dQtInvoice;else if(diff==='income')okDiff=dIncome;else if(diff==='qtIncome')okDiff=dQtIncome;else if(diff==='qtInvoice')okDiff=dQtInvoice;else if(diff==='none')okDiff=!dIncome&&!dQtIncome&&!dQtInvoice;return (!s||t(r.order_id).toLowerCase().includes(s))&&(!risk||r.risk_level===risk)&&okDiff})}
+function costFilter(){enrichRows();const s=t($('v3CostSearch')?.value).toLowerCase(),risk=t($('v3CostRisk')?.value),diff=t($('v3CostDiff')?.value),T=tol();COST=(liveResultState.rows||[]).filter(r=>r.income_source_present).filter(r=>{const dIncome=abs(r.v3_invoice_income_diff)>T,dQtIncome=abs(r.v3_settlement_diff_income)>T,dQtBest=abs(r.v3_settlement_diff_best)>T,dQtInvoice=abs(r.v3_settlement_diff_invoice)>T;let okDiff=true;if(diff==='any')okDiff=dIncome||dQtBest||dQtInvoice;else if(diff==='income')okDiff=dIncome;else if(diff==='qtIncome')okDiff=dQtIncome;else if(diff==='qtBest')okDiff=dQtBest;else if(diff==='qtInvoice')okDiff=dQtInvoice;else if(diff==='none')okDiff=!dIncome&&!dQtBest&&!dQtInvoice;return (!s||t(r.order_id).toLowerCase().includes(s))&&(!risk||r.risk_level===risk)&&okDiff})}
 function renderDashboard(){
   enrichRows();const rows=liveResultState.rows||[],rev=rows.filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered)),cost=rows.filter(r=>r.income_source_present);
   const s=(id,v)=>{if($(id))$(id).textContent=moneyV(v)};
   s('v3OrdOriginal',sum(rev,'v3_revenue_original'));s('v3OrdRefund',sum(rev,'v3_refund'));s('v3OrdCurrent',sum(rev,'v3_revenue_current'));
   s('v3InvFirst',sum(rev,'v3_invoice_first'));s('v3InvAdj',sum(rev,'v3_invoice_adjustment'));s('v3InvTotal',sum(rev,'v3_invoice_total_after_adjustment'));s('v3InvTotalDiff',sum(rev,'v3_invoice_total_diff'));s('v3InvEffective',sum(rev,'v3_invoice_effective'));s('v3InvDiff',sum(rev,'v3_invoice_diff'));
-  s('v3IncRevenue',sum(cost,'v3_income_revenue'));s('v3Transaction',sum(cost,'transaction_fee'));s('v3Commission',sum(cost,'tiktok_commission'));s('v3Processing',sum(cost,'processing_fee'));s('v3Shipping',sum(cost,'shipping_net'));s('v3Affiliate',sum(cost,'affiliate'));s('v3Partner',sum(cost,'partner'));s('v3Adjust',sum(cost,'adjustment'));s('v3FeeTotal',sum(cost,'v3_fee_total'));
-  s('v3Settlement',sum(cost,'settlement'));s('v3CalcIncome',sum(cost,'v3_settlement_calc_income'));s('v3DiffIncome',sum(cost,'v3_settlement_diff_income'));s('v3CalcInvoice',sum(cost,'v3_settlement_calc_invoice'));s('v3DiffInvoice',sum(cost,'v3_settlement_diff_invoice'));
+  s('v3IncomeGoods',sum(cost,'v3_income_goods'));s('v3IncomeRefund',sum(cost,'v3_income_goods_refund'));s('v3BuyerShipping',sum(cost,'v3_buyer_shipping'));s('v3BuyerShippingRefund',sum(cost,'v3_buyer_shipping_refund'));
+  s('v3IncRevenue',sum(cost,'v3_income_revenue'));s('v3Transaction',sum(cost,'transaction_fee'));s('v3Commission',sum(cost,'tiktok_commission'));s('v3Processing',sum(cost,'processing_fee'));s('v3Shipping',sum(cost,'shipping_net'));s('v3Affiliate',sum(cost,'affiliate'));s('v3Partner',sum(cost,'partner'));s('v3Adjust',sum(cost,'adjustment'));s('v3FeeTotal',sum(cost,'v3_fee_total'));s('v3FeeSource',sum(cost,'v3_fee_source'));s('v3FeeUnmapped',sum(cost,'v3_fee_unmapped'));
+  s('v3Settlement',sum(cost,'settlement'));s('v3CalcIncome',sum(cost,'v3_settlement_calc_income'));s('v3DiffIncome',sum(cost,'v3_settlement_diff_income'));s('v3CalcBest',sum(cost,'v3_settlement_calc_best'));s('v3DiffBest',sum(cost,'v3_settlement_diff_best'));s('v3CalcInvoice',sum(cost,'v3_settlement_calc_invoice'));s('v3DiffInvoice',sum(cost,'v3_settlement_diff_invoice'));
   const high=rows.filter(r=>r.risk_level==='CAO').length,med=rows.filter(r=>r.risk_level==='TRUNG BÌNH').length,low=rows.filter(r=>r.risk_level==='THẤP').length;
   if($('v3High'))$('v3High').textContent=high.toLocaleString('vi-VN');if($('v3Med'))$('v3Med').textContent=med.toLocaleString('vi-VN');if($('v3Low'))$('v3Low').textContent=low.toLocaleString('vi-VN');
   const map=new Map();for(const r of rows){for(const x of(r.v3_risks||[])){if(!map.has(x.code))map.set(x.code,{...x,count:0});map.get(x.code).count++}}
@@ -149,7 +168,18 @@ function renderRevenue(){
 }
 function renderCost(){
   costFilter();const b=$('v3CostBody');if(!b)return;
-  const totalPages=Math.max(1,Math.ceil(COST.length/PAGE_SIZE));COST_PAGE=Math.min(COST_PAGE,totalPages);const pageRows=COST.slice((COST_PAGE-1)*PAGE_SIZE,COST_PAGE*PAGE_SIZE);b.innerHTML=pageRows.map(r=>'<tr><td>'+esc(r.order_id)+'</td><td>'+esc(r.created||r.income_order_date)+'</td><td>'+esc(r.settlement_date)+'</td><td>'+moneyV(r.v3_income_revenue)+'</td><td>'+moneyV(r.v3_invoice_effective)+'</td><td>'+moneyV(r.v3_invoice_income_diff)+'</td><td>'+moneyV(r.transaction_fee)+'</td><td>'+moneyV(r.tiktok_commission)+'</td><td>'+moneyV(r.processing_fee)+'</td><td>'+moneyV(r.shipping_net)+'</td><td>'+moneyV(r.affiliate)+'</td><td>'+moneyV(r.partner)+'</td><td>'+moneyV(r.adjustment)+'</td><td>'+moneyV(r.v3_fee_total)+'</td><td>'+moneyV(r.settlement)+'</td><td>'+moneyV(r.v3_settlement_calc_income)+'</td><td>'+moneyV(r.v3_settlement_diff_income)+'</td><td>'+moneyV(r.v3_settlement_calc_invoice)+'</td><td>'+moneyV(r.v3_settlement_diff_invoice)+'</td><td>'+esc(r.order_month||'')+'</td><td>'+esc(r.settlement_month||'')+'</td><td>'+esc(r.source_state)+'</td><td><span class="badge '+riskBadge(r.risk_level)+'">'+r.risk_level+'</span></td><td>'+esc(r.risk_reason)+'</td><td>'+esc(r.risk_solution)+'</td></tr>').join('');
+  const totalPages=Math.max(1,Math.ceil(COST.length/PAGE_SIZE));COST_PAGE=Math.min(COST_PAGE,totalPages);const pageRows=COST.slice((COST_PAGE-1)*PAGE_SIZE,COST_PAGE*PAGE_SIZE);b.innerHTML=pageRows.map(r=>'<tr>'+
+    '<td>'+esc(r.order_id)+'</td><td>'+esc(r.created||r.income_order_date)+'</td><td>'+esc(r.settlement_date)+'</td>'+
+    '<td>'+moneyV(r.seller_revenue)+'</td><td>'+moneyV(r.seller_refund)+'</td><td>'+moneyV(r.buyer_shipping_income)+'</td><td>'+moneyV(r.buyer_shipping_refund)+'</td>'+
+    '<td><b>'+moneyV(r.v3_income_revenue)+'</b></td><td>'+moneyV(r.v3_invoice_effective)+'</td><td>'+moneyV(r.v3_invoice_income_diff)+'</td>'+
+    '<td>'+moneyV(r.transaction_fee)+'</td><td>'+moneyV(r.tiktok_commission)+'</td><td>'+moneyV(r.processing_fee)+'</td>'+
+    '<td>'+moneyV(r.shipping_actual)+'</td><td>'+moneyV(r.shipping_platform_discount)+'</td><td>'+moneyV(r.failed_delivery_subsidy)+'</td><td>'+moneyV(r.return_shipping_actual)+'</td><td>'+moneyV(r.shipping_net)+'</td>'+
+    '<td>'+moneyV(r.affiliate_base)+'</td><td>'+moneyV(r.affiliate_ads)+'</td><td>'+moneyV(r.partner_base)+'</td><td>'+moneyV(r.partner_ads)+'</td>'+
+    '<td>'+moneyV(r.adjustment)+'</td><td>'+moneyV(r.v3_fee_total)+'</td><td>'+moneyV(r.v3_fee_source)+'</td><td>'+moneyV(r.v3_fee_unmapped)+'</td>'+
+    '<td>'+moneyV(r.settlement)+'</td><td>'+moneyV(r.v3_settlement_calc_income)+'</td><td>'+moneyV(r.v3_settlement_diff_income)+'</td>'+
+    '<td><b>'+moneyV(r.v3_settlement_calc_best)+'</b></td><td><b>'+moneyV(r.v3_settlement_diff_best)+'</b></td>'+
+    '<td>'+moneyV(r.v3_settlement_calc_invoice)+'</td><td>'+moneyV(r.v3_settlement_diff_invoice)+'</td>'+
+    '<td>'+esc(r.order_month||'')+'</td><td>'+esc(r.settlement_month||'')+'</td><td>'+esc(r.source_state)+'</td><td><span class="badge '+riskBadge(r.risk_level)+'">'+r.risk_level+'</span></td><td>'+esc(r.risk_reason)+'</td><td>'+esc(r.risk_solution)+'</td></tr>').join('');
   if($('v3CostCount')){const df=t($('v3CostDiff')?.value);$('v3CostCount').textContent=COST.length.toLocaleString('vi-VN')+' Order ID trong Income'+(df?' · đang lọc chênh lệch':'')+' · Trang '+COST_PAGE+'/'+totalPages;}const pg=$('v3CostPage');if(pg)pg.textContent='Trang '+COST_PAGE+'/'+totalPages;
 }
 window.v3ApplyRevenue=()=>{REV_PAGE=1;renderRevenue()};window.v3ApplyCost=()=>{COST_PAGE=1;renderCost()};window.v3RevPrev=()=>{REV_PAGE=Math.max(1,REV_PAGE-1);renderRevenue()};window.v3RevNext=()=>{REV_PAGE++;renderRevenue()};window.v3CostPrev=()=>{COST_PAGE=Math.max(1,COST_PAGE-1);renderCost()};window.v3CostNext=()=>{COST_PAGE++;renderCost()};
@@ -161,8 +191,8 @@ function install(){
  const dash=$('dashboard');if(dash)dash.innerHTML=[
  '<div class="card section"><h2>Tổng quan kiểm soát kế toán</h2><div class="muted">Hiển thị đầy đủ doanh thu đơn hàng, vòng đời hóa đơn, từng nhóm chi phí và phép kiểm tra tiền TikTok quyết toán.</div></div>',
  '<div class="card section"><h3>A. Doanh thu theo Tất cả đơn hàng & hóa đơn</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">GT đơn gốc (Order Amount)</span><b id="v3OrdOriginal">0</b></div><div class="card kpi"><span class="muted">Hoàn đơn</span><b id="v3OrdRefund">0</b></div><div class="card kpi"><span class="muted">Doanh thu phải xuất hiện tại</span><b id="v3OrdCurrent">0</b></div><div class="card kpi"><span class="muted">HĐ lần đầu</span><b id="v3InvFirst">0</b></div><div class="card kpi"><span class="muted">HĐ điều chỉnh</span><b id="v3InvAdj">0</b></div><div class="card kpi"><span class="muted">Tổng HĐ = lần đầu + điều chỉnh</span><b id="v3InvTotal">0</b></div><div class="card kpi"><span class="muted">Chênh Tổng HĐ - DT cần xuất</span><b id="v3InvTotalDiff">0</b></div><div class="card kpi"><span class="muted">HĐ hiệu lực theo vòng đời</span><b id="v3InvEffective">0</b></div><div class="card kpi"><span class="muted">Chênh HĐ hiệu lực</span><b id="v3InvDiff">0</b></div></div></div>',
- '<div class="card section"><h3>B. Income - doanh thu & từng loại chi phí</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">Doanh thu Income</span><b id="v3IncRevenue">0</b></div><div class="card kpi"><span class="muted">Phí giao dịch</span><b id="v3Transaction">0</b></div><div class="card kpi"><span class="muted">Hoa hồng TikTok</span><b id="v3Commission">0</b></div><div class="card kpi"><span class="muted">Phí xử lý</span><b id="v3Processing">0</b></div><div class="card kpi"><span class="muted">Vận chuyển thuần</span><b id="v3Shipping">0</b></div><div class="card kpi"><span class="muted">Affiliate</span><b id="v3Affiliate">0</b></div><div class="card kpi"><span class="muted">Đối tác</span><b id="v3Partner">0</b></div><div class="card kpi"><span class="muted">Điều chỉnh</span><b id="v3Adjust">0</b></div><div class="card kpi"><span class="muted">Tổng chi phí chi tiết</span><b id="v3FeeTotal">0</b></div></div></div>',
- '<div class="card section"><h3>C. Kiểm tra tiền TikTok quyết toán</h3><div class="kpis" style="grid-template-columns:repeat(5,minmax(150px,1fr))"><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="v3Settlement">0</b></div><div class="card kpi"><span class="muted">DT Income + phí + ĐC</span><b id="v3CalcIncome">0</b></div><div class="card kpi"><span class="muted">Chênh QT theo Income</span><b id="v3DiffIncome">0</b></div><div class="card kpi"><span class="muted">HĐ đã xuất + phí + ĐC</span><b id="v3CalcInvoice">0</b></div><div class="card kpi"><span class="muted">Chênh QT theo HĐ</span><b id="v3DiffInvoice">0</b></div></div><div class="note" style="margin-top:10px">Phí trong Income đang mang dấu âm. Vì vậy công thức là <b>Doanh thu + tổng phí (âm) + điều chỉnh = tiền quyết toán</b>.</div></div>',
+ '<div class="card section"><h3>B. Income - cấu thành doanh thu & chi phí quyết toán</h3><div class="note" style="margin-bottom:10px"><b>Doanh thu Income chuẩn QT = Doanh thu hàng sau giảm + Hoàn hàng + VC người mua + Hoàn VC người mua.</b> “VC thuần” bên dưới chỉ là <b>chi phí vận chuyển phía sàn</b>, không còn dùng để che phần VC người mua trong doanh thu.</div><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">DT hàng sau giảm</span><b id="v3IncomeGoods">0</b></div><div class="card kpi"><span class="muted">Hoàn hàng</span><b id="v3IncomeRefund">0</b></div><div class="card kpi"><span class="muted">VC người mua</span><b id="v3BuyerShipping">0</b></div><div class="card kpi"><span class="muted">Hoàn VC người mua</span><b id="v3BuyerShippingRefund">0</b></div><div class="card kpi"><span class="muted">Doanh thu Income chuẩn QT</span><b id="v3IncRevenue">0</b></div><div class="card kpi"><span class="muted">Phí giao dịch</span><b id="v3Transaction">0</b></div><div class="card kpi"><span class="muted">Hoa hồng TikTok</span><b id="v3Commission">0</b></div><div class="card kpi"><span class="muted">Phí xử lý</span><b id="v3Processing">0</b></div><div class="card kpi"><span class="muted">VC phí sàn thuần</span><b id="v3Shipping">0</b></div><div class="card kpi"><span class="muted">Affiliate</span><b id="v3Affiliate">0</b></div><div class="card kpi"><span class="muted">Đối tác</span><b id="v3Partner">0</b></div><div class="card kpi"><span class="muted">Điều chỉnh</span><b id="v3Adjust">0</b></div><div class="card kpi"><span class="muted">Phí chi tiết đã map</span><b id="v3FeeTotal">0</b></div><div class="card kpi"><span class="muted">Tổng phí nguồn Income</span><b id="v3FeeSource">0</b></div><div class="card kpi"><span class="muted">Phí khác/chưa map</span><b id="v3FeeUnmapped">0</b></div></div></div>',
+ '<div class="card section"><h3>C. Kiểm tra tiền TikTok quyết toán</h3><div class="kpis" style="grid-template-columns:repeat(4,minmax(150px,1fr))"><div class="card kpi"><span class="muted">TikTok quyết toán</span><b id="v3Settlement">0</b></div><div class="card kpi"><span class="muted">QT tính từ phí chi tiết</span><b id="v3CalcIncome">0</b></div><div class="card kpi"><span class="muted">Chênh QT phí chi tiết</span><b id="v3DiffIncome">0</b></div><div class="card kpi"><span class="muted">QT chuẩn theo Tổng phí nguồn</span><b id="v3CalcBest">0</b></div><div class="card kpi"><span class="muted">Chênh QT chuẩn</span><b id="v3DiffBest">0</b></div><div class="card kpi"><span class="muted">HĐ đã xuất + phí + ĐC</span><b id="v3CalcInvoice">0</b></div><div class="card kpi"><span class="muted">Chênh QT theo HĐ</span><b id="v3DiffInvoice">0</b></div></div><div class="note" style="margin-top:10px">Phép kiểm chính để ít lệch nhất: <b>DT Income chuẩn QT + Tổng phí nguồn Income + Điều chỉnh = TikTok quyết toán</b>. Phần “phí khác/chưa map” vẫn hiển thị riêng để không che mất loại phí chưa phân loại.</div></div>',
  '<div class="card section"><h3>D. Ma trận rủi ro & phương án xử lý</h3><div class="kpis" style="grid-template-columns:repeat(3,minmax(150px,1fr));margin-bottom:10px"><div class="card kpi"><span class="muted">Rủi ro cao</span><b id="v3High">0</b></div><div class="card kpi"><span class="muted">Rủi ro trung bình</span><b id="v3Med">0</b></div><div class="card kpi"><span class="muted">Rủi ro thấp</span><b id="v3Low">0</b></div></div><div class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số dòng</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3RiskSummary"></tbody></table></div></div>'
  ].join('');
  const inv=$('invoice');if(inv)inv.innerHTML=[
@@ -171,7 +201,7 @@ function install(){
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
  '<div class="card section"><h2>Income - doanh thu, chi phí & quyết toán TikTok</h2><div class="muted">Kiểm tra đồng thời: <b>(1) doanh thu Income có khớp HĐ đã xuất không</b>; <b>(2) doanh thu + từng loại phí + điều chỉnh có khớp tiền TikTok quyết toán không</b>. Income của đơn khác tháng không bị loại.</div></div>',
- '<div class="card section"><div class="toolbar"><input id="v3CostSearch" placeholder="Order ID" oninput="v3ApplyCost()"><select id="v3CostRisk" onchange="v3ApplyCost()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><select id="v3CostDiff" onchange="v3ApplyCost()"><option value="">Tất cả chênh lệch</option><option value="any">Có chênh lệch</option><option value="income">Chênh DT HĐ - Income</option><option value="qtIncome">Chênh quyết toán theo Income</option><option value="qtInvoice">Chênh quyết toán theo HĐ</option><option value="none">Không chênh lệch</option></select><button class="btn primary" onclick="v3ExportCost()">Xuất Excel</button><span id="v3CostCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày đơn</th><th>Ngày QT</th><th>DT Income</th><th>HĐ đã xuất</th><th>Chênh DT HĐ-Income</th><th>Phí GD</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thuần</th><th>Affiliate</th><th>Đối tác</th><th>Điều chỉnh</th><th>Tổng chi phí</th><th>TikTok QT</th><th>DT Income+phí+ĐC</th><th>Chênh QT Income</th><th>HĐ+phí+ĐC</th><th>Chênh QT theo HĐ</th><th>Tháng đơn</th><th>Tháng QT</th><th>Nguồn</th><th>Mức RR</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3CostBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3CostPrev()">← Trước</button><span id="v3CostPage" class="muted"></span><button class="btn" onclick="v3CostNext()">Sau →</button></div></div>'
+ '<div class="card section"><div class="toolbar"><input id="v3CostSearch" placeholder="Order ID" oninput="v3ApplyCost()"><select id="v3CostRisk" onchange="v3ApplyCost()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><select id="v3CostDiff" onchange="v3ApplyCost()"><option value="">Tất cả chênh lệch</option><option value="any">Có chênh lệch</option><option value="income">Chênh DT HĐ - Income</option><option value="qtBest">Chênh QT chuẩn theo Tổng phí nguồn</option><option value="qtIncome">Chênh QT theo phí chi tiết</option><option value="qtInvoice">Chênh quyết toán theo HĐ</option><option value="none">Không chênh lệch</option></select><button class="btn primary" onclick="v3ExportCost()">Xuất Excel</button><span id="v3CostCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày đơn</th><th>Ngày QT</th><th>DT hàng sau giảm</th><th>Hoàn hàng</th><th>VC người mua</th><th>Hoàn VC người mua</th><th>DT Income chuẩn QT</th><th>HĐ đã xuất</th><th>Chênh DT HĐ-Income</th><th>Phí GD</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thực tế</th><th>CK VC nền tảng</th><th>Trợ cấp giao thất bại</th><th>VC trả hàng</th><th>VC phí sàn thuần</th><th>Affiliate</th><th>Affiliate Ads</th><th>Đối tác</th><th>Đối tác Ads</th><th>Điều chỉnh</th><th>Phí chi tiết đã map</th><th>Tổng phí nguồn</th><th>Phí khác/chưa map</th><th>TikTok QT</th><th>QT tính phí chi tiết</th><th>Chênh QT chi tiết</th><th>QT chuẩn theo Tổng phí</th><th>Chênh QT chuẩn</th><th>HĐ+phí+ĐC</th><th>Chênh QT theo HĐ</th><th>Tháng đơn</th><th>Tháng QT</th><th>Nguồn</th><th>Mức RR</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3CostBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3CostPrev()">← Trước</button><span id="v3CostPage" class="muted"></span><button class="btn" onclick="v3CostNext()">Sau →</button></div></div>'
  ].join('');
  renderDashboard();renderRevenue();renderCost();
 }
@@ -412,7 +442,11 @@ const KPI_DRILL_MAP={
   v3InvTotalDiff:{label:'Chênh Tổng HĐ - DT cần xuất',field:'v3_invoice_total_diff',source:'revenue'},
   v3InvEffective:{label:'HĐ hiệu lực theo vòng đời',field:'v3_invoice_effective',source:'revenue'},
   v3InvDiff:{label:'Chênh HĐ hiệu lực',field:'v3_invoice_diff',source:'revenue'},
-  v3IncRevenue:{label:'Doanh thu Income',field:'v3_income_revenue',source:'cost'},
+  v3IncomeGoods:{label:'DT hàng sau giảm',field:'v3_income_goods',source:'cost'},
+  v3IncomeRefund:{label:'Hoàn hàng',field:'v3_income_goods_refund',source:'cost'},
+  v3BuyerShipping:{label:'VC người mua',field:'v3_buyer_shipping',source:'cost'},
+  v3BuyerShippingRefund:{label:'Hoàn VC người mua',field:'v3_buyer_shipping_refund',source:'cost'},
+  v3IncRevenue:{label:'Doanh thu Income chuẩn QT',field:'v3_income_revenue',source:'cost'},
   v3Transaction:{label:'Phí giao dịch',field:'transaction_fee',source:'cost'},
   v3Commission:{label:'Hoa hồng TikTok',field:'tiktok_commission',source:'cost'},
   v3Processing:{label:'Phí xử lý',field:'processing_fee',source:'cost'},
@@ -420,10 +454,14 @@ const KPI_DRILL_MAP={
   v3Affiliate:{label:'Affiliate',field:'affiliate',source:'cost'},
   v3Partner:{label:'Đối tác',field:'partner',source:'cost'},
   v3Adjust:{label:'Điều chỉnh',field:'adjustment',source:'cost'},
-  v3FeeTotal:{label:'Tổng chi phí chi tiết',field:'v3_fee_total',source:'cost'},
+  v3FeeTotal:{label:'Phí chi tiết đã map',field:'v3_fee_total',source:'cost'},
+  v3FeeSource:{label:'Tổng phí nguồn Income',field:'v3_fee_source',source:'cost'},
+  v3FeeUnmapped:{label:'Phí khác/chưa map',field:'v3_fee_unmapped',source:'cost'},
   v3Settlement:{label:'TikTok quyết toán',field:'settlement',source:'cost'},
   v3CalcIncome:{label:'DT Income + phí + ĐC',field:'v3_settlement_calc_income',source:'cost'},
-  v3DiffIncome:{label:'Chênh QT theo Income',field:'v3_settlement_diff_income',source:'cost'},
+  v3DiffIncome:{label:'Chênh QT phí chi tiết',field:'v3_settlement_diff_income',source:'cost'},
+  v3CalcBest:{label:'QT chuẩn theo Tổng phí nguồn',field:'v3_settlement_calc_best',source:'cost'},
+  v3DiffBest:{label:'Chênh QT chuẩn',field:'v3_settlement_diff_best',source:'cost'},
   v3CalcInvoice:{label:'HĐ đã xuất + phí + ĐC',field:'v3_settlement_calc_invoice',source:'cost'},
   v3DiffInvoice:{label:'Chênh QT theo HĐ',field:'v3_settlement_diff_invoice',source:'cost'},
   v3High:{label:'Rủi ro cao',risk:'CAO',source:'all'},

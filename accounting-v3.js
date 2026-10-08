@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.21 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.22 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -218,16 +218,22 @@ window.parseOrdersForEngine=async function(file){
       const sellerItemDiscount=sellerItemDiscountRaw>0?-sellerItemDiscountRaw:sellerItemDiscountRaw;
       const platformDisc=Math.abs(platformRaw);
 
-      // Công thức được chốt:
+      // Công thức nghiệp vụ:
       // Tổng phụ sau giảm giá người bán = Tổng trước giảm + Giảm giá người bán + Giảm giá mặt hàng do người bán chi trả.
+      // Nhưng file TikTok có thể không xuất riêng đủ 2 cột giảm giá người bán.
+      // Khi có "SKU Subtotal After Discount" + giảm giá TikTok tài trợ,
+      // khôi phục trực tiếp phần của người bán = genericAfter + platformDisc.
       let sellerAfter=0;
-      if(Math.abs(before)>tol() || Math.abs(sellerDiscount)>tol() || Math.abs(sellerItemDiscount)>tol()){
-        sellerAfter=before+sellerDiscount+sellerItemDiscount;
-      }else if(Math.abs(directSellerAfter)>tol()){
+      if(Math.abs(directSellerAfter)>tol()){
         sellerAfter=directSellerAfter;
-      }else{
-        // Fallback cuối cùng cho file thiếu cột cấu thành.
+      }else if(Math.abs(genericAfter)>tol() && Math.abs(platformDisc)>tol()){
         sellerAfter=genericAfter+platformDisc;
+      }else if(Math.abs(before)>tol() && (Math.abs(sellerDiscount)>tol() || Math.abs(sellerItemDiscount)>tol())){
+        sellerAfter=before+sellerDiscount+sellerItemDiscount;
+      }else if(Math.abs(genericAfter)>tol()){
+        sellerAfter=genericAfter;
+      }else{
+        sellerAfter=before+sellerDiscount+sellerItemDiscount;
       }
 
       a.sku_revenue+=sellerAfter;
@@ -642,8 +648,8 @@ window.traceOrder=function(){
     '</tbody></table></div></div>'+
     '<div class="card section"><h3>App tính theo logic hiện hành</h3><div class="formula">'+
       'Nguồn doanh thu phải xuất = <b>TẤT CẢ ĐƠN HÀNG</b><br>'+
-      'Tổng phụ sau giảm giá người bán = Tổng trước giảm + Giảm giá người bán + Giảm giá mặt hàng do người bán chi trả<br>'+
-      '= '+moneyV(r.seller_subtotal_before_discount||0)+' + '+moneyV(r.seller_discount||0)+' + '+moneyV(r.seller_item_discount||0)+' = <b>'+moneyV(r.sku_revenue||0)+'</b><br>'+
+      'Tổng phụ sau giảm giá người bán = '+moneyV(r.sku_revenue||0)+'<br>'+
+      '<span class="muted">App ưu tiên cột trực tiếp; nếu TikTok không xuất đủ cột giảm giá người bán thì khôi phục từ: SKU sau tất cả giảm giá + phần TikTok tài trợ.</span><br>'+
       'Doanh thu phải xuất = Tổng phụ sau giảm giá người bán + VC người mua (VC chỉ tính 1 lần/Order ID)<br>'+
       '= '+moneyV(r.sku_revenue||0)+' + '+moneyV(r.order_shipping_buyer||0)+' = <b>'+moneyV(r.v3_revenue_original)+'</b><br>'+
       (isFullReturnOrder(r)?'Đơn hoàn toàn bộ ⇒ Doanh thu cần điều chỉnh = -'+moneyV(r.v3_revenue_original)+'<br>':'')+

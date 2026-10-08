@@ -1,4 +1,4 @@
-/* NHT Accounting Ledger V4.4 - 2026-10-08 */
+/* NHT Accounting Ledger V4.5 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -133,22 +133,48 @@ function buildLedger(periods){
 }
 function journalRows(months){
   const out=[];
+  const push=(m,type,no,co,amt,basis,note)=>{
+    if(Math.abs(N(amt))<=0.000001)return;
+    out.push({Thang:m.month,Nghiep_vu:type,No:no,Co:co,So_tien:Math.abs(N(amt)),Can_cu:basis,Dien_giai:note});
+  };
+  const postAccrual=(m,name,amount,expenseAccount,belongsTikTokInvoice=true)=>{
+    const a=N(amount);
+    if(Math.abs(a)<=0.000001)return;
+    if(a>0){
+      push(m,'Trích trước - '+name,expenseAccount,'335 - Chi phí phải trả',a,'Income theo Order ID',(belongsTikTokInvoice?'Thuộc HĐ TikTok dự kiến; ':'Không thuộc HĐ TikTok; ')+'ghi nhận đúng tháng doanh thu');
+    }else{
+      push(m,'Hoàn/giảm trích trước - '+name,'335 - Chi phí phải trả',expenseAccount,-a,'Income theo Order ID','Khoản giảm/trợ cấp làm giảm chi phí của tháng doanh thu');
+    }
+  };
+
   for(const m of months){
-    if(ABS(m.revenue)>0.000001)out.push({Thang:m.month,Nghiep_vu:'Doanh thu theo ngày hóa đơn',No:'131 - TikTok',Co:'511 / 3331',So_tien:m.revenue,Can_cu:'Hóa đơn phát hành',Dien_giai:'Ghi nhận doanh thu theo ngày HĐ'});
-    const pushCost=(name,amount,account,invoiceFlag=true)=>{if(Math.abs(amount)>0.000001)out.push({Thang:m.month,Nghiep_vu:name,No:account,Co:'335 - Chi phí phải trả',So_tien:amount,Can_cu:'Income theo Order ID',Dien_giai:(invoiceFlag?'Thuộc HĐ TikTok dự kiến; ':'Không thuộc HĐ TikTok; ')+'match về tháng doanh thu'})};
-    pushCost('Trích trước - Phí giao dịch',m.transaction_fee,'641/642 - Phí giao dịch');
-    pushCost('Trích trước - Hoa hồng TikTok Shop',m.tiktok_commission,'641/642 - Hoa hồng sàn');
-    pushCost('Trích trước - Phí xử lý đơn hàng',m.processing_fee,'641/642 - Phí xử lý');
-    pushCost('Trích trước - Phí vận chuyển thực tế',m.shipping_actual,'641/642 - Phí vận chuyển');
-    pushCost('Trích trước - Chiết khấu VC nền tảng',m.shipping_platform_discount,'641/642 - Phí vận chuyển');
-    pushCost('Trích trước - Trợ cấp giao hàng không thành công',m.failed_delivery_subsidy,'641/642 - Phí vận chuyển');
-    pushCost('Trích trước - Phí vận chuyển trả hàng',m.return_shipping_actual,'641/642 - Phí vận chuyển');
-    pushCost('Trích trước - Hoa hồng liên kết',m.affiliate_base,'641/642 - Creator/Affiliate',false);
-    pushCost('Trích trước - Hoa hồng liên kết quảng cáo',m.affiliate_ads,'641/642 - Creator/Affiliate',false);
-    pushCost('Trích trước - Hoa hồng đối tác liên kết',m.partner_base,'641/642 - Hoa hồng đối tác',false);
-    pushCost('Trích trước - Hoa hồng quảng cáo đối tác',m.partner_ads,'641/642 - Hoa hồng đối tác',false);
-    if(ABS(m.adjustment)>0.000001)out.push({Thang:m.month,Nghiep_vu:'Điều chỉnh Income',No:m.adjustment>=0?'131 - TikTok':'641/642 hoặc 138/3388',Co:m.adjustment>=0?'711/3388 hoặc TK liên quan':'131 - TikTok',So_tien:Math.abs(m.adjustment),Can_cu:'Income',Dien_giai:'Khoản điều chỉnh làm thay đổi phải thu TikTok; cần rà soát bản chất trước khi chốt TK'});
-    if(ABS(m.settlement)>0.000001)out.push({Thang:m.month,Nghiep_vu:'TikTok quyết toán',No:'112',Co:'131 - TikTok',So_tien:m.settlement,Can_cu:'Tổng settlement file Income',Dien_giai:'Tiền quyết toán = tổng settlement các file Income'});
+    // 1) Doanh thu: ghi đúng bản chất, không qua 138.
+    push(m,'Ghi nhận doanh thu theo ngày hóa đơn','131 - Phải thu TikTok','511 / 3331 - Doanh thu & VAT',m.revenue,'Hóa đơn phát hành','Ghi nhận doanh thu theo ngày HĐ; chi tiết VAT tách theo hóa đơn thực tế');
+
+    // 2) Trích trước từng loại chi phí về đúng tháng doanh thu.
+    postAccrual(m,'Phí giao dịch',m.transaction_fee,'641/642 - Phí giao dịch',true);
+    postAccrual(m,'Hoa hồng TikTok Shop',m.tiktok_commission,'641/642 - Hoa hồng sàn',true);
+    postAccrual(m,'Phí xử lý đơn hàng',m.processing_fee,'641/642 - Phí xử lý',true);
+    postAccrual(m,'Phí vận chuyển thực tế',m.shipping_actual,'641/642 - Phí vận chuyển',true);
+    postAccrual(m,'Chiết khấu phí vận chuyển nền tảng',m.shipping_platform_discount,'641/642 - Phí vận chuyển',true);
+    postAccrual(m,'Trợ cấp giao hàng không thành công',m.failed_delivery_subsidy,'641/642 - Phí vận chuyển',true);
+    postAccrual(m,'Phí vận chuyển trả hàng thực tế',m.return_shipping_actual,'641/642 - Phí vận chuyển',true);
+    postAccrual(m,'Hoa hồng liên kết',m.affiliate_base,'641/642 - Creator/Affiliate',false);
+    postAccrual(m,'Hoa hồng liên kết quảng cáo',m.affiliate_ads,'641/642 - Creator/Affiliate',false);
+    postAccrual(m,'Hoa hồng đối tác liên kết',m.partner_base,'641/642 - Hoa hồng đối tác',false);
+    postAccrual(m,'Hoa hồng quảng cáo đối tác',m.partner_ads,'641/642 - Hoa hồng đối tác',false);
+
+    // 3) Khoản điều chỉnh: tạm treo để không tự áp sai bản chất kế toán.
+    if(Math.abs(N(m.adjustment))>0.000001){
+      if(N(m.adjustment)>0){
+        push(m,'Số tiền điều chỉnh TikTok - tạm treo','131 - Phải thu TikTok','3388 - Chờ phân loại',m.adjustment,'Income','Tạm treo khoản điều chỉnh dương; phân loại lại khi xác định bản chất');
+      }else{
+        push(m,'Số tiền điều chỉnh TikTok - tạm treo','1388 - Chờ phân loại','131 - Phải thu TikTok',-m.adjustment,'Income','Tạm treo khoản điều chỉnh âm; phân loại lại khi xác định bản chất');
+      }
+    }
+
+    // 4) Tiền thực nhận: giảm công nợ TikTok.
+    push(m,'TikTok quyết toán / tiền về','112 - Tiền gửi ngân hàng','131 - Phải thu TikTok',m.settlement,'Tổng settlement file Income','Ghi nhận tổng tiền TikTok quyết toán thực tế trong tháng');
   }
   return out;
 }
@@ -196,11 +222,11 @@ window.exportJournalV4=()=>objectRowsToXlsx(ACC_JOURNAL,'BUT_TOAN_GOI_Y.xlsx','B
 function install(){
   const sec=$('accounting');if(!sec)return;
   sec.innerHTML=[
-    '<div class="card section"><h2>Phân hệ hạch toán / sổ sách</h2><div class="muted"><b>Doanh thu:</b> theo ngày HĐ. <b>Chi phí:</b> match về tháng doanh thu của Order ID; nếu tháng sau mới quyết toán vẫn trích trước tại tháng doanh thu. <b>Tiền quyết toán tính:</b> Doanh thu theo HĐ - Tổng chi phí + Số tiền điều chỉnh TikTok. <b>Tiền quyết toán thực tế:</b> tổng settlement của các file Income.</div></div>',
+    '<div class="card section"><h2>Phân hệ hạch toán / sổ sách</h2><div class="muted"><b>Doanh thu:</b> Nợ 131 TikTok / Có 511, 3331 theo ngày HĐ. <b>Chi phí:</b> trích trước từng loại về đúng tháng doanh thu: Nợ 641/642 / Có 335; khoản giảm/trợ cấp sẽ đảo chiều. <b>Số tiền điều chỉnh TikTok:</b> tạm treo 1388/3388 đến khi xác định bản chất. <b>Tiền quyết toán thực tế:</b> Nợ 112 / Có 131 TikTok theo settlement của Income.</div></div>',
     '<div class="card section"><div class="grid3"><div><label class="muted">Công ty</label><input id="accCompany"></div><div><label class="muted">Năm</label><input id="accYear" type="number"></div><div><label class="muted">Sàn</label><select id="accMarketplace"><option value="tiktok">TikTok</option><option value="shopee">Shopee</option><option value="custom">Khác</option></select></div></div><div style="margin-top:10px"><button class="btn primary" onclick="renderAccountingV4()">Tính lại</button> <button class="btn" onclick="exportAccountingV4()">Xuất tổng hợp tháng</button> <button class="btn" onclick="exportJournalV4()">Xuất bút toán</button> <span id="accContext" class="muted"></span></div></div>',
     '<div class="kpis section" style="grid-template-columns:repeat(6,minmax(150px,1fr))"><div class="card kpi"><span class="muted">Doanh thu theo HĐ</span><b id="accRevenue">0</b></div><div class="card kpi"><span class="muted">Tổng chi phí match DT</span><b id="accCost">0</b></div><div class="card kpi"><span class="muted">HĐ TikTok dự kiến</span><b id="accTikTokInv">0</b></div><div class="card kpi"><span class="muted">Tiền quyết toán tính</span><b id="accCalculatedSettlement">0</b></div><div class="card kpi"><span class="muted">Tiền quyết toán thực tế</span><b id="accSettlement">0</b></div><div class="card kpi"><span class="muted">Chênh quyết toán</span><b id="accSettlementVariance">0</b></div></div>',
     '<div class="card section"><h3>Tổng hợp chi phí chi tiết theo tháng</h3><div class="note" style="margin-bottom:10px"><b>HĐ TikTok dự kiến</b> = Phí giao dịch + HH TikTok + Phí xử lý + vận chuyển thuần; không gồm Creator/Affiliate và hoa hồng đối tác. <b>Tiền quyết toán tính = Doanh thu theo HĐ - Tổng chi phí + Số tiền điều chỉnh TikTok.</b> <b>Tiền quyết toán thực tế</b> = tổng settlement trong Income. Ba chỉ tiêu này được tách riêng.</div><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Doanh thu theo HĐ</th><th>Phí giao dịch</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thực tế</th><th>CK VC nền tảng</th><th>Trợ cấp giao thất bại</th><th>VC trả hàng</th><th>VC thuần</th><th>Affiliate</th><th>Affiliate Ads</th><th>HH đối tác</th><th>HH QC đối tác</th><th>Tổng chi phí</th><th>Số tiền điều chỉnh TikTok</th><th>HĐ TikTok dự kiến</th><th>Tiền quyết toán tính</th><th>Tiền quyết toán thực tế</th><th>Chênh quyết toán</th></tr></thead><tbody id="accMonthlyBody"></tbody></table></div></div>',
-    '<div class="card section"><h3>Bút toán gợi ý</h3><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Nghiệp vụ</th><th>Nợ</th><th>Có</th><th>Số tiền</th><th>Căn cứ</th><th>Diễn giải</th></tr></thead><tbody id="accJournalBody"></tbody></table></div><div class="note" style="margin-top:10px">Khi nhận HĐ TikTok thực tế: đối chiếu số HĐ với <b>HĐ TikTok dự kiến</b>, hoàn/đảo khoản trích trước 335 tương ứng và chỉ ghi nhận VAT đầu vào 1331 theo HĐ hợp lệ.</div></div>'
+    '<div class="card section"><h3>Bút toán gợi ý</h3><div class="tablewrap"><table><thead><tr><th>Tháng</th><th>Nghiệp vụ</th><th>Nợ</th><th>Có</th><th>Số tiền</th><th>Căn cứ</th><th>Diễn giải</th></tr></thead><tbody id="accJournalBody"></tbody></table></div><div class="note" style="margin-top:10px">Khi nhận HĐ TikTok thực tế: đối chiếu với <b>HĐ TikTok dự kiến</b>. Phần đã trích trước 335 được hoàn/đảo và chuyển sang công nợ nhà cung cấp theo hóa đơn; VAT đầu vào 1331 chỉ tách theo hóa đơn hợp lệ. Creator/Affiliate và hoa hồng đối tác theo dõi riêng, không gộp vào HĐ TikTok.</div></div>'
   ].join('');
   if($('accCompany'))$('accCompany').value=$('companyName')?.value||'';
   if($('accYear'))$('accYear').value=$('dataYear')?.value||new Date().getFullYear();

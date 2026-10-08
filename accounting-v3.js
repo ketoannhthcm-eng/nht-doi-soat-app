@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.2 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.3 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -127,7 +127,7 @@ window.buildLiveRows=function(orders,incomes,invoices){
 function riskBadge(x){return x==='CAO'?'bad':x==='TRUNG BÌNH'?'warn':'ok'}
 let REV=[],COST=[];
 function revFilter(){enrichRows();const s=t($('v3RevSearch')?.value).toLowerCase(),st=t($('v3RevStatus')?.value),risk=t($('v3RevRisk')?.value);REV=(liveResultState.rows||[]).filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered)).filter(r=>(!s||t(r.order_id).toLowerCase().includes(s)||t(r.invoice_no).toLowerCase().includes(s))&&(!st||r.v3_invoice_state===st)&&(!risk||r.risk_level===risk))}
-function costFilter(){enrichRows();const s=t($('v3CostSearch')?.value).toLowerCase(),risk=t($('v3CostRisk')?.value);COST=(liveResultState.rows||[]).filter(r=>r.income_source_present).filter(r=>(!s||t(r.order_id).toLowerCase().includes(s))&&(!risk||r.risk_level===risk))}
+function costFilter(){enrichRows();const s=t($('v3CostSearch')?.value).toLowerCase(),risk=t($('v3CostRisk')?.value),diff=t($('v3CostDiff')?.value),T=tol();COST=(liveResultState.rows||[]).filter(r=>r.income_source_present).filter(r=>{const dIncome=abs(r.v3_invoice_income_diff)>T,dQtIncome=abs(r.v3_settlement_diff_income)>T,dQtInvoice=abs(r.v3_settlement_diff_invoice)>T;let okDiff=true;if(diff==='any')okDiff=dIncome||dQtIncome||dQtInvoice;else if(diff==='income')okDiff=dIncome;else if(diff==='qtIncome')okDiff=dQtIncome;else if(diff==='qtInvoice')okDiff=dQtInvoice;else if(diff==='none')okDiff=!dIncome&&!dQtIncome&&!dQtInvoice;return (!s||t(r.order_id).toLowerCase().includes(s))&&(!risk||r.risk_level===risk)&&okDiff})}
 function renderDashboard(){
   enrichRows();const rows=liveResultState.rows||[],rev=rows.filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered)),cost=rows.filter(r=>r.income_source_present);
   const s=(id,v)=>{if($(id))$(id).textContent=moneyV(v)};
@@ -150,7 +150,7 @@ function renderRevenue(){
 function renderCost(){
   costFilter();const b=$('v3CostBody');if(!b)return;
   b.innerHTML=COST.map(r=>'<tr><td>'+esc(r.order_id)+'</td><td>'+esc(r.created||r.income_order_date)+'</td><td>'+esc(r.settlement_date)+'</td><td>'+moneyV(r.v3_income_revenue)+'</td><td>'+moneyV(r.v3_invoice_effective)+'</td><td>'+moneyV(r.v3_invoice_income_diff)+'</td><td>'+moneyV(r.transaction_fee)+'</td><td>'+moneyV(r.tiktok_commission)+'</td><td>'+moneyV(r.processing_fee)+'</td><td>'+moneyV(r.shipping_net)+'</td><td>'+moneyV(r.affiliate)+'</td><td>'+moneyV(r.partner)+'</td><td>'+moneyV(r.adjustment)+'</td><td>'+moneyV(r.v3_fee_total)+'</td><td>'+moneyV(r.settlement)+'</td><td>'+moneyV(r.v3_settlement_calc_income)+'</td><td>'+moneyV(r.v3_settlement_diff_income)+'</td><td>'+moneyV(r.v3_settlement_calc_invoice)+'</td><td>'+moneyV(r.v3_settlement_diff_invoice)+'</td><td>'+esc(r.order_month||'')+'</td><td>'+esc(r.settlement_month||'')+'</td><td>'+esc(r.source_state)+'</td><td><span class="badge '+riskBadge(r.risk_level)+'">'+r.risk_level+'</span></td><td>'+esc(r.risk_reason)+'</td><td>'+esc(r.risk_solution)+'</td></tr>').join('');
-  if($('v3CostCount'))$('v3CostCount').textContent=COST.length.toLocaleString('vi-VN')+' Order ID trong Income';
+  if($('v3CostCount')){const df=t($('v3CostDiff')?.value);$('v3CostCount').textContent=COST.length.toLocaleString('vi-VN')+' Order ID trong Income'+(df?' · đang lọc chênh lệch':'');}
 }
 window.v3ApplyRevenue=renderRevenue;window.v3ApplyCost=renderCost;
 window.v3ExportRevenue=()=>objectRowsToXlsx(REV,'DOI_CHIEU_DOANH_THU_V3.xlsx','Doanh thu',true);
@@ -171,7 +171,7 @@ function install(){
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
  '<div class="card section"><h2>Income - doanh thu, chi phí & quyết toán TikTok</h2><div class="muted">Kiểm tra đồng thời: <b>(1) doanh thu Income có khớp HĐ đã xuất không</b>; <b>(2) doanh thu + từng loại phí + điều chỉnh có khớp tiền TikTok quyết toán không</b>. Income của đơn khác tháng không bị loại.</div></div>',
- '<div class="card section"><div class="toolbar"><input id="v3CostSearch" placeholder="Order ID" oninput="v3ApplyCost()"><select id="v3CostRisk" onchange="v3ApplyCost()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportCost()">Xuất Excel</button><span id="v3CostCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày đơn</th><th>Ngày QT</th><th>DT Income</th><th>HĐ đã xuất</th><th>Chênh DT HĐ-Income</th><th>Phí GD</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thuần</th><th>Affiliate</th><th>Đối tác</th><th>Điều chỉnh</th><th>Tổng chi phí</th><th>TikTok QT</th><th>DT Income+phí+ĐC</th><th>Chênh QT Income</th><th>HĐ+phí+ĐC</th><th>Chênh QT theo HĐ</th><th>Tháng đơn</th><th>Tháng QT</th><th>Nguồn</th><th>Mức RR</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3CostBody"></tbody></table></div></div>'
+ '<div class="card section"><div class="toolbar"><input id="v3CostSearch" placeholder="Order ID" oninput="v3ApplyCost()"><select id="v3CostRisk" onchange="v3ApplyCost()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><select id="v3CostDiff" onchange="v3ApplyCost()"><option value="">Tất cả chênh lệch</option><option value="any">Có chênh lệch</option><option value="income">Chênh DT HĐ - Income</option><option value="qtIncome">Chênh quyết toán theo Income</option><option value="qtInvoice">Chênh quyết toán theo HĐ</option><option value="none">Không chênh lệch</option></select><button class="btn primary" onclick="v3ExportCost()">Xuất Excel</button><span id="v3CostCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày đơn</th><th>Ngày QT</th><th>DT Income</th><th>HĐ đã xuất</th><th>Chênh DT HĐ-Income</th><th>Phí GD</th><th>HH TikTok</th><th>Phí xử lý</th><th>VC thuần</th><th>Affiliate</th><th>Đối tác</th><th>Điều chỉnh</th><th>Tổng chi phí</th><th>TikTok QT</th><th>DT Income+phí+ĐC</th><th>Chênh QT Income</th><th>HĐ+phí+ĐC</th><th>Chênh QT theo HĐ</th><th>Tháng đơn</th><th>Tháng QT</th><th>Nguồn</th><th>Mức RR</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3CostBody"></tbody></table></div></div>'
  ].join('');
  renderDashboard();renderRevenue();renderCost();
 }

@@ -225,6 +225,32 @@ summary{cursor:pointer;font-weight:700;color:#76503E!important}
 #exceptionRows .btn{padding:4px 8px!important;font-size:12px!important}
 </style>
 
+
+<style id="sidebarGroupedV2">
+.sidebar-v2{display:flex;flex-direction:column;gap:4px;padding:14px 10px!important;overflow-y:auto}
+.sidebar-v2 .logo{padding:8px 10px 12px!important;margin-bottom:2px;font-size:17px}
+.sidebar-v2 .navbtn{display:flex;align-items:center;gap:8px;padding:8px 10px!important;margin:1px 0!important;border-radius:9px;font-size:13px;line-height:1.25}
+.sidebar-v2 .nav-home{font-weight:700;margin-bottom:4px!important}
+.navgroup{border-top:1px solid rgba(255,255,255,.07);padding-top:5px;margin-top:2px}
+.navgroup summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:7px;padding:7px 9px;color:#f3b18f;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.55px;user-select:none}
+.navgroup summary::-webkit-details-marker{display:none}
+.navgroup summary:after{content:"▾";margin-left:auto;font-size:10px;opacity:.65;transition:transform .18s ease}
+.navgroup:not([open]) summary:after{transform:rotate(-90deg)}
+.navgroup-body{padding-left:5px}
+.navgroup-body .navbtn{padding-left:14px!important;color:#b9c1cf}
+.sidebar-footer{margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
+.nav-logout{color:#f2a58e!important}
+@media(max-width:1000px){
+  .sidebar-v2{display:flex!important;flex-direction:row;align-items:center;overflow-x:auto;overflow-y:hidden;padding:8px!important}
+  .sidebar-v2 .logo{display:none}
+  .navgroup{display:contents}
+  .navgroup summary{display:none}
+  .navgroup-body{display:flex;padding:0}
+  .sidebar-footer{display:flex;margin:0;padding:0;border:0}
+  .sidebar-v2 .navbtn{min-width:max-content}
+}
+</style>
+
 </head>
 <body>
 <div id="standaloneNotice" style="position:sticky;top:0;z-index:9999;padding:9px 14px;font-family:inherit;font-size:13px">🌷 Dữ liệu được tích lũy theo Order ID xuyên kỳ. Income/HĐ điều chỉnh ở kỳ sau sẽ tự cộng vào vòng đời đơn cũ khi chạy kỳ mới. ⚠️ Nên full backup định kỳ.</div>
@@ -259,25 +285,52 @@ summary{cursor:pointer;font-weight:700;color:#76503E!important}
 </div>
 
 <div id="app" class="shell hidden">
-<aside>
+<aside class="sidebar-v2">
   <div id="sidebarBrand" class="logo">NHT Marketplace</div>
-<button class="navbtn active" data-page="dashboard">Tổng quan</button>
-  <button class="navbtn" data-page="upload">Tải dữ liệu</button>
-  <button class="navbtn" data-page="marketplace">Cấu hình sàn</button>
-  
-<button class="navbtn" data-page="control">🛡️ Control Center</button>
-<button class="navbtn" data-page="trace">🔎 Truy vết đơn</button>
-<button class="navbtn" data-page="exceptions">⚠️ Ngoại lệ</button>
-<button class="navbtn" data-page="audit">🧾 Audit Log</button>
-<button class="navbtn" data-page="annual">Tổng hợp năm</button>
-  <button class="navbtn" data-page="invoice">Đối chiếu HĐ</button>
-  <button class="navbtn" data-page="fees">Doanh thu & Chi phí</button>
-  <button class="navbtn" data-page="accounting">Hạch toán</button>
-  <button class="navbtn" data-page="config">Cấu hình cột</button>
-  <button id="adminNav" class="navbtn" data-page="users">Quản lý tài khoản</button>
-  <button class="navbtn" data-page="branding">Cài đặt thương hiệu</button>
-  <button class="navbtn" data-page="account">Tài khoản của tôi</button>
-  <button class="navbtn" onclick="logout()">Đăng xuất</button>
+
+  <button class="navbtn active nav-home" data-page="dashboard"><span>⌂</span>Tổng quan</button>
+
+  <details class="navgroup" open>
+    <summary><span>▦</span>Dữ liệu</summary>
+    <div class="navgroup-body">
+      <button class="navbtn" data-page="upload">Tải dữ liệu</button>
+      <button class="navbtn" data-page="marketplace">Cấu hình sàn</button>
+    </div>
+  </details>
+
+  <details class="navgroup" open>
+    <summary><span>✓</span>Đối soát</summary>
+    <div class="navgroup-body">
+      <button class="navbtn" data-page="invoice">Đối chiếu doanh thu</button>
+      <button class="navbtn" data-page="fees">Chi phí & quyết toán</button>
+      <button class="navbtn" data-page="trace">Truy vết đơn</button>
+      <button class="navbtn" data-page="exceptions">Ngoại lệ</button>
+      <button class="navbtn" data-page="control">Control Center</button>
+    </div>
+  </details>
+
+  <details class="navgroup" open>
+    <summary><span>▤</span>Báo cáo & kế toán</summary>
+    <div class="navgroup-body">
+      <button class="navbtn" data-page="annual">Tổng hợp năm</button>
+      <button class="navbtn" data-page="accounting">Hạch toán</button>
+      <button class="navbtn" data-page="audit">Audit Log</button>
+    </div>
+  </details>
+
+  <details class="navgroup">
+    <summary><span>⚙</span>Hệ thống</summary>
+    <div class="navgroup-body">
+      <button class="navbtn" data-page="config">Cấu hình cột</button>
+      <button id="adminNav" class="navbtn" data-page="users">Quản lý tài khoản</button>
+      <button class="navbtn" data-page="branding">Cài đặt thương hiệu</button>
+      <button class="navbtn" data-page="account">Tài khoản của tôi</button>
+    </div>
+  </details>
+
+  <div class="sidebar-footer">
+    <button class="navbtn nav-logout" onclick="logout()">Đăng xuất</button>
+  </div>
 </aside>
 <main>
   <div class="top">

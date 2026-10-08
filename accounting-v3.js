@@ -400,7 +400,114 @@ window.renderAnnualSummary=async function(){
   }).join('')||'<tr><td colspan="13" class="muted">Chưa có dữ liệu phù hợp bộ lọc.</td></tr>';
 };
 
-document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{installAnnualV34();install();refreshAnnualSelectors?.().then(()=>renderAnnualSummary()).catch(()=>{})},350));
+
+/* ===== DASHBOARD KPI DRILL-DOWN V3.7 ===== */
+const KPI_DRILL_MAP={
+  v3OrdOriginal:{label:'GT đơn gốc (Order Amount)',field:'v3_revenue_original',source:'revenue'},
+  v3OrdRefund:{label:'Hoàn đơn',field:'v3_refund',source:'revenue'},
+  v3OrdCurrent:{label:'Doanh thu phải xuất hiện tại',field:'v3_revenue_current',source:'revenue'},
+  v3InvFirst:{label:'HĐ lần đầu',field:'v3_invoice_first',source:'revenue'},
+  v3InvAdj:{label:'HĐ điều chỉnh',field:'v3_invoice_adjustment',source:'revenue'},
+  v3InvTotal:{label:'Tổng HĐ = lần đầu + điều chỉnh',field:'v3_invoice_total_after_adjustment',source:'revenue'},
+  v3InvTotalDiff:{label:'Chênh Tổng HĐ - DT cần xuất',field:'v3_invoice_total_diff',source:'revenue'},
+  v3InvEffective:{label:'HĐ hiệu lực theo vòng đời',field:'v3_invoice_effective',source:'revenue'},
+  v3InvDiff:{label:'Chênh HĐ hiệu lực',field:'v3_invoice_diff',source:'revenue'},
+  v3IncRevenue:{label:'Doanh thu Income',field:'v3_income_revenue',source:'cost'},
+  v3Transaction:{label:'Phí giao dịch',field:'transaction_fee',source:'cost'},
+  v3Commission:{label:'Hoa hồng TikTok',field:'tiktok_commission',source:'cost'},
+  v3Processing:{label:'Phí xử lý',field:'processing_fee',source:'cost'},
+  v3Shipping:{label:'Vận chuyển thuần',field:'shipping_net',source:'cost'},
+  v3Affiliate:{label:'Affiliate',field:'affiliate',source:'cost'},
+  v3Partner:{label:'Đối tác',field:'partner',source:'cost'},
+  v3Adjust:{label:'Điều chỉnh',field:'adjustment',source:'cost'},
+  v3FeeTotal:{label:'Tổng chi phí chi tiết',field:'v3_fee_total',source:'cost'},
+  v3Settlement:{label:'TikTok quyết toán',field:'settlement',source:'cost'},
+  v3CalcIncome:{label:'DT Income + phí + ĐC',field:'v3_settlement_calc_income',source:'cost'},
+  v3DiffIncome:{label:'Chênh QT theo Income',field:'v3_settlement_diff_income',source:'cost'},
+  v3CalcInvoice:{label:'HĐ đã xuất + phí + ĐC',field:'v3_settlement_calc_invoice',source:'cost'},
+  v3DiffInvoice:{label:'Chênh QT theo HĐ',field:'v3_settlement_diff_invoice',source:'cost'},
+  v3High:{label:'Rủi ro cao',risk:'CAO',source:'all'},
+  v3Med:{label:'Rủi ro trung bình',risk:'TRUNG BÌNH',source:'all'},
+  v3Low:{label:'Rủi ro thấp',risk:'THẤP',source:'all'}
+};
+let KPI_DETAIL_ROWS=[],KPI_DETAIL_FILTERED=[],KPI_DETAIL_PAGE=1;
+const KPI_DETAIL_PAGE_SIZE=100;
+
+function ensureKpiDetailModal(){
+  if($('kpiDetailModal'))return;
+  const box=document.createElement('div');
+  box.id='kpiDetailModal';
+  box.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.58);z-index:9999;padding:4vh 3vw;';
+  box.innerHTML='<div style="background:#fff;border-radius:16px;max-width:1400px;margin:auto;height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.25)">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #eee">'+
+      '<div><h2 id="kpiDetailTitle" style="margin:0">Chi tiết chỉ tiêu</h2><div id="kpiDetailSummary" class="muted"></div></div>'+
+      '<div style="display:flex;gap:8px"><button class="btn" onclick="exportKpiDetail()">Xuất Excel</button><button class="btn" onclick="closeKpiDetail()">Đóng</button></div>'+
+    '</div>'+
+    '<div style="padding:10px 16px"><input id="kpiDetailSearch" placeholder="Tìm Order ID / số HĐ / trạng thái..." oninput="filterKpiDetail()" style="max-width:420px"></div>'+
+    '<div class="tablewrap" style="margin:0 16px;max-height:none;flex:1"><table><thead><tr><th>Order ID</th><th>Ngày đơn</th><th>Ngày giao</th><th>Ngày QT</th><th>Số HĐ</th><th>Trạng thái HĐ</th><th>Giá trị đóng góp</th><th>Mức RR</th><th>Rủi ro / trạng thái</th></tr></thead><tbody id="kpiDetailBody"></tbody></table></div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px"><span id="kpiDetailCount" class="muted"></span><div><button class="btn" onclick="kpiDetailPrev()">← Trước</button> <span id="kpiDetailPage" class="muted"></span> <button class="btn" onclick="kpiDetailNext()">Sau →</button></div></div>'+
+  '</div>';
+  box.addEventListener('click',e=>{if(e.target===box)closeKpiDetail()});
+  document.body.appendChild(box);
+}
+function detailRowsForMetric(cfg){
+  enrichRows();
+  let rows=(liveResultState.rows||[]);
+  if(cfg.source==='revenue')rows=rows.filter(r=>r.order_source_present&&delivered(r)&&inPeriod(r.delivered));
+  else if(cfg.source==='cost')rows=rows.filter(r=>r.income_source_present);
+  if(cfg.risk)rows=rows.filter(r=>r.risk_level===cfg.risk);
+  return rows.map(r=>({
+    order_id:t(r.order_id),created:t(r.created||r.income_order_date),delivered:t(r.delivered),settlement_date:t(r.settlement_date),
+    invoice_no:t(r.invoice_no),invoice_status:t(r.invoice_statuses||r.v3_invoice_state),
+    value:cfg.field?n(r[cfg.field]):1,risk:t(r.risk_level),note:t(r.risk_reason||r.v3_invoice_state||r.result)
+  })).filter(x=>cfg.risk||abs(x.value)>tol());
+}
+window.openKpiDetail=function(id){
+  const cfg=KPI_DRILL_MAP[id];if(!cfg)return;
+  ensureKpiDetailModal();
+  KPI_DETAIL_ROWS=detailRowsForMetric(cfg);KPI_DETAIL_FILTERED=KPI_DETAIL_ROWS;KPI_DETAIL_PAGE=1;
+  $('kpiDetailTitle').textContent='Chi tiết · '+cfg.label;
+  $('kpiDetailSearch').value='';
+  $('kpiDetailModal').style.display='block';
+  renderKpiDetail();
+};
+window.closeKpiDetail=function(){if($('kpiDetailModal'))$('kpiDetailModal').style.display='none'};
+window.filterKpiDetail=function(){
+  const q=t($('kpiDetailSearch')?.value).toLowerCase();
+  KPI_DETAIL_FILTERED=KPI_DETAIL_ROWS.filter(x=>!q||[x.order_id,x.invoice_no,x.invoice_status,x.risk,x.note].some(v=>t(v).toLowerCase().includes(q)));
+  KPI_DETAIL_PAGE=1;renderKpiDetail();
+};
+function renderKpiDetail(){
+  const totalPages=Math.max(1,Math.ceil(KPI_DETAIL_FILTERED.length/KPI_DETAIL_PAGE_SIZE));
+  KPI_DETAIL_PAGE=Math.min(Math.max(1,KPI_DETAIL_PAGE),totalPages);
+  const page=KPI_DETAIL_FILTERED.slice((KPI_DETAIL_PAGE-1)*KPI_DETAIL_PAGE_SIZE,KPI_DETAIL_PAGE*KPI_DETAIL_PAGE_SIZE);
+  if($('kpiDetailBody'))$('kpiDetailBody').innerHTML=page.map(x=>'<tr>'+
+    '<td><b>'+esc(x.order_id)+'</b></td><td>'+esc(x.created)+'</td><td>'+esc(x.delivered)+'</td><td>'+esc(x.settlement_date)+'</td>'+
+    '<td>'+esc(x.invoice_no)+'</td><td>'+esc(x.invoice_status)+'</td><td>'+moneyV(x.value)+'</td>'+
+    '<td><span class="badge '+riskBadge(x.risk)+'">'+esc(x.risk)+'</span></td><td>'+esc(x.note)+'</td></tr>').join('')||
+    '<tr><td colspan="9" class="muted">Không có dòng chi tiết.</td></tr>';
+  const total=KPI_DETAIL_FILTERED.reduce((a,x)=>a+n(x.value),0);
+  if($('kpiDetailSummary'))$('kpiDetailSummary').textContent=KPI_DETAIL_FILTERED.length.toLocaleString('vi-VN')+' dòng · Tổng giá trị: '+moneyV(total);
+  if($('kpiDetailCount'))$('kpiDetailCount').textContent=KPI_DETAIL_FILTERED.length.toLocaleString('vi-VN')+' dòng';
+  if($('kpiDetailPage'))$('kpiDetailPage').textContent='Trang '+KPI_DETAIL_PAGE+'/'+totalPages;
+}
+window.kpiDetailPrev=function(){KPI_DETAIL_PAGE=Math.max(1,KPI_DETAIL_PAGE-1);renderKpiDetail()};
+window.kpiDetailNext=function(){const mx=Math.max(1,Math.ceil(KPI_DETAIL_FILTERED.length/KPI_DETAIL_PAGE_SIZE));KPI_DETAIL_PAGE=Math.min(mx,KPI_DETAIL_PAGE+1);renderKpiDetail()};
+window.exportKpiDetail=function(){objectRowsToXlsx(KPI_DETAIL_FILTERED,'CHI_TIET_CHI_TIEU_TONG_QUAN.xlsx','Chi tiet',true)};
+
+function bindDashboardKpiDrill(){
+  ensureKpiDetailModal();
+  for(const id of Object.keys(KPI_DRILL_MAP)){
+    const b=$(id);if(!b)continue;
+    const card=b.closest('.kpi');if(!card||card.dataset.drillBound)return;
+    card.dataset.drillBound='1';card.style.cursor='pointer';card.title='Bấm để xem chi tiết';
+    card.addEventListener('click',()=>openKpiDetail(id));
+    const hint=document.createElement('div');hint.textContent='Xem chi tiết ›';hint.style.cssText='font-size:11px;margin-top:5px;opacity:.68';
+    card.appendChild(hint);
+  }
+}
+
+document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{installAnnualV34();install();refreshAnnualSelectors?.().then(()=>renderAnnualSummary()).catch(()=>{});bindDashboardKpiDrill()},350));
 window.addEventListener('load',()=>setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},1400));
 document.addEventListener('click',e=>{const b=e.target.closest?.('.navbtn');if(!b)return;const p=b.dataset?.page;setTimeout(()=>{if(p==='dashboard')renderDashboard();else if(p==='invoice')renderRevenue();else if(p==='fees')renderCost();else if(p==='annual')renderAnnualSummary();},80)});
 if(typeof loadAnnualIntoViews==='function'){const old=loadAnnualIntoViews;window.loadAnnualIntoViews=function(a){const z=old(a);setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},60);return z}}

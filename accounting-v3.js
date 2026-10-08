@@ -369,67 +369,48 @@ function installAnnualV34(){
 }
 
 window.renderAnnualSummary=async function(){
-  const all=await dbGetAllPeriods();
-  const arr=annualSelectedPeriods(all);
+  const all=await fastGetAll('period_compact');
+  const fake=all.map(p=>({id:p.id,company:p.company,companyKey:p.companyKey,year:p.year,marketplace:p.marketplace,period:p.period,from:p.from,to:p.to,note:p.note,savedAt:p.savedAt,summary:p.summary}));
+  const arr=annualSelectedPeriods(fake);
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=typeof v==='number'?moneyV(v):v};
   set('annualPeriods',arr.length);
-  let rows=[];
-  try{rows=typeof mergePeriodRows==='function'?mergePeriodRows(arr):arr.flatMap(x=>x.rows||[])}catch(e){rows=arr.flatMap(x=>x.rows||[])}
-  rows=(rows||[]).map(r=>enrich(r));
-  set('annualOrders',new Set(rows.map(r=>r.order_id).filter(Boolean)).size);
-  set('annualRequired',sum(rows,'v3_revenue_current'));
-  set('annualSettlement',sum(rows,'settlement'));
-  set('annualOrderOriginal',sum(rows,'v3_revenue_original'));
-  set('annualOrderRefund',sum(rows,'v3_refund'));
-  set('annualRequired2',sum(rows,'v3_revenue_current'));
-  set('annualInvFirst',sum(rows,'v3_invoice_first'));
-  set('annualInvAdj',sum(rows,'v3_invoice_adjustment'));
-  set('annualInvTotal',sum(rows,'v3_invoice_total_after_adjustment'));
-  set('annualInvTotalDiff',sum(rows,'v3_invoice_total_diff'));
-  set('annualInvEffective',sum(rows,'v3_invoice_effective'));
-  set('annualInvDiff',sum(rows,'v3_invoice_diff'));
-  set('annualSellerNet',sum(rows,'seller_net'));
-  set('annualBuyerShipping',sum(rows,'buyer_shipping_net'));
-  set('annualIncomeRevenue',sum(rows,'v3_income_revenue'));
-  set('annualTransactionFee',sum(rows,'transaction_fee'));
-  set('annualCommission',sum(rows,'tiktok_commission'));
-  set('annualProcessing',sum(rows,'processing_fee'));
-  set('annualShippingNet',sum(rows,'shipping_net'));
-  set('annualAffiliate',sum(rows,'affiliate'));
-  set('annualPartner',sum(rows,'partner'));
-  set('annualAdjustment',sum(rows,'adjustment'));
-  set('annualFeeTotal',sum(rows,'v3_fee_total'));
-  set('annualSettlement2',sum(rows,'settlement'));
-  set('annualCalcIncome',sum(rows,'v3_settlement_calc_income'));
-  set('annualDiffIncome',sum(rows,'v3_settlement_diff_income'));
-  set('annualCalcInvoice',sum(rows,'v3_settlement_calc_invoice'));
-  set('annualDiffInvoice',sum(rows,'v3_settlement_diff_invoice'));
+  let annual=null;
+  const csel=$('annualCompany')?.value||'',ysel=Number($('annualYear')?.value||0),mp=$('annualMarketplace')?.value||'';
+  const hasRange=!!($('annualFrom')?.value||$('annualTo')?.value||t($('annualPeriodText')?.value));
+  if(csel&&ysel&&mp&&!hasRange)annual=await fastGet('annual_light',[csel.toUpperCase(),mp,ysel].join('||'));
+  if(!annual){
+    const selectedIds=new Set(arr.map(x=>x.id)),periods=all.filter(x=>selectedIds.has(x.id));
+    if(periods.length)annual=annualLightFromPeriods(periods,{company:periods[0].company,year:periods[0].year,marketplace:periods[0].marketplace});
+  }
+  const sm=annual?.summary||{},d=annual?.duplicateStats||{};
+  set('annualOrders',d.uniqueOrders||0);set('annualRequired',sm.required||0);set('annualSettlement',sm.settlement||0);
+  set('annualOrderOriginal',sm.revenueOriginal||0);set('annualOrderRefund',sm.refund||0);set('annualRequired2',sm.required||0);
+  set('annualInvFirst',sm.invFirst||0);set('annualInvAdj',sm.invAdj||0);set('annualInvTotal',sm.invTotal||0);set('annualInvTotalDiff',sm.invTotalDiff||0);set('annualInvEffective',sm.invEffective||0);set('annualInvDiff',sm.invDiff||0);
+  set('annualSellerNet',sm.sellerNet||0);set('annualBuyerShipping',sm.buyerShipping||0);set('annualIncomeRevenue',sm.incomeRevenue||0);set('annualTransactionFee',sm.transaction||0);set('annualCommission',sm.commission||0);set('annualProcessing',sm.processing||0);set('annualShippingNet',sm.shipping||0);set('annualAffiliate',sm.affiliate||0);set('annualPartner',sm.partner||0);set('annualAdjustment',sm.adjustment||0);set('annualFeeTotal',sm.feeTotal||0);
+  set('annualSettlement2',sm.settlement||0);set('annualCalcIncome',sm.calcIncome||0);set('annualDiffIncome',sm.diffIncome||0);set('annualCalcInvoice',sm.calcInvoice||0);set('annualDiffInvoice',sm.diffInvoice||0);
+  set('annualCrossPeriod',d.crossPeriodOrders||0);set('annualIncomeDup',d.duplicateIncomeEvents||0);set('annualInvoiceDup',d.duplicateInvoiceEvents||0);set('annualUniqueAfterDedupe',d.uniqueOrders||0);
 
-  const counts={};
-  for(const r of rows){const k=r.v3_invoice_state||'KHÔNG XÁC ĐỊNH';counts[k]=(counts[k]||0)+1}
-  if($('annualStatusBox'))$('annualStatusBox').innerHTML=Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k,v])=>esc(k)+': <b>'+v.toLocaleString('vi-VN')+'</b>').join('<br>')||'Chưa có dữ liệu.';
-
-  const rm=new Map();
-  for(const r of rows){for(const x of(r.v3_risks||[])){if(!rm.has(x.code))rm.set(x.code,{...x,count:0});rm.get(x.code).count++}}
-  if($('annualRiskRows'))$('annualRiskRows').innerHTML=[...rm.values()].sort((a,b)=>sev[b.level]-sev[a.level]||b.count-a.count).map(x=>'<tr><td>'+esc(x.code)+'</td><td><span class="badge '+riskBadge(x.level)+'">'+x.level+'</span></td><td>'+x.count.toLocaleString('vi-VN')+'</td><td>'+esc(x.reason)+'</td><td>'+esc(x.solution)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Chưa có dữ liệu.</td></tr>';
+  if($('annualStatusBox'))$('annualStatusBox').innerHTML=Object.entries(annual?.statusCounts||{}).sort((a,b)=>b[1]-a[1]).map(([k,v])=>esc(k)+': <b>'+v.toLocaleString('vi-VN')+'</b>').join('<br>')||'Chưa có dữ liệu.';
+  if($('annualRiskRows'))$('annualRiskRows').innerHTML=(annual?.risks||[]).sort((a,b)=>sev[b.level]-sev[a.level]||b.count-a.count).map(x=>'<tr><td>'+esc(x.code)+'</td><td><span class="badge '+riskBadge(x.level)+'">'+x.level+'</span></td><td>'+x.count.toLocaleString('vi-VN')+'</td><td>'+esc(x.reason)+'</td><td>'+esc(x.solution)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Chưa có dữ liệu.</td></tr>';
 
   const body=$('annualPeriodRows');
   if(body)body.innerHTML=arr.sort((a,b)=>(a.from||a.period||'').localeCompare(b.from||b.period||'')).map(x=>{
-    const rr=(x.rows||[]).map(r=>enrich({...r}));
-    return '<tr><td>'+esc(x.company)+'</td><td>'+esc(x.marketplace)+'</td><td>'+esc(x.year)+'</td><td>'+esc(x.period)+'</td><td>'+esc(x.from||'')+'</td><td>'+esc(x.to||'')+'</td><td>'+new Set(rr.map(r=>r.order_id).filter(Boolean)).size.toLocaleString('vi-VN')+'</td><td>'+moneyV(sum(rr,'v3_revenue_current'))+'</td><td>'+moneyV(sum(rr,'v3_income_revenue'))+'</td><td>'+moneyV(sum(rr,'v3_fee_total'))+'</td><td>'+moneyV(sum(rr,'settlement'))+'</td><td>'+esc((x.savedAt||'').replace('T',' ').slice(0,19))+'</td><td><button class="btn" onclick=\'loadStoredPeriod('+JSON.stringify(x.id)+')\'>Mở</button> <button class="btn danger" onclick=\'deleteStoredPeriod('+JSON.stringify(x.id)+')\'>Xóa</button></td></tr>';
+    const p=all.find(z=>z.id===x.id),ps=p?.summary||{};
+    return '<tr><td>'+esc(x.company)+'</td><td>'+esc(x.marketplace)+'</td><td>'+esc(x.year)+'</td><td>'+esc(x.period)+'</td><td>'+esc(x.from||'')+'</td><td>'+esc(x.to||'')+'</td><td>'+n(ps.orderCount).toLocaleString('vi-VN')+'</td><td>'+moneyV(ps.required||0)+'</td><td>'+moneyV(ps.incomeRevenue||0)+'</td><td>'+moneyV(ps.feeTotal||0)+'</td><td>'+moneyV(ps.settlement||0)+'</td><td>'+esc((x.savedAt||'').replace('T',' ').slice(0,19))+'</td><td><button class="btn" onclick=\'loadStoredPeriod('+JSON.stringify(x.id)+')\'>Mở</button> <button class="btn danger" onclick=\'deleteStoredPeriod('+JSON.stringify(x.id)+')\'>Xóa</button></td></tr>';
   }).join('')||'<tr><td colspan="13" class="muted">Chưa có dữ liệu phù hợp bộ lọc.</td></tr>';
 };
-
 
 document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{installAnnualV34();install();refreshAnnualSelectors?.().then(()=>renderAnnualSummary()).catch(()=>{})},350));
 window.addEventListener('load',()=>setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},1400));
 document.addEventListener('click',e=>{const b=e.target.closest?.('.navbtn');if(!b)return;const p=b.dataset?.page;setTimeout(()=>{if(p==='dashboard')renderDashboard();else if(p==='invoice')renderRevenue();else if(p==='fees')renderCost();else if(p==='annual')renderAnnualSummary();},80)});
 if(typeof loadAnnualIntoViews==='function'){const old=loadAnnualIntoViews;window.loadAnnualIntoViews=function(a){const z=old(a);setTimeout(()=>{enrichRows();renderDashboard();renderRevenue();renderCost()},60);return z}}
-})();
-const __oldLoadStoredPeriodV36=window.loadStoredPeriod;
+
 window.loadStoredPeriod=async function(id){
   const x=await dbGetPeriodDirect(id);if(!x)return;
-  const v=(id,val)=>{const e=$(id);if(e)e.value=val||''};v('companyName',x.company);v('dataYear',x.year);v('periodName',x.period);v('fromDate',x.from);v('toDate',x.to);v('periodNote',x.note);v('marketplaceSelect',x.marketplace);
-  window.__CURRENT_PERIOD_ROWS=x.rows||[];liveResultState.rows=x.rows||[];liveResultState.invoiceRows=liveResultState.rows;liveResultState.feesRows=liveResultState.rows;enrichRows();renderDashboard();renderRevenue();renderCost();document.querySelector('[data-page="dashboard"]')?.click();
+  const v=(id,val)=>{const e=$(id);if(e)e.value=val||''};
+  v('companyName',x.company);v('dataYear',x.year);v('periodName',x.period);v('fromDate',x.from);v('toDate',x.to);v('periodNote',x.note);v('marketplaceSelect',x.marketplace);
+  window.__CURRENT_PERIOD_ROWS=x.rows||[];liveResultState.rows=x.rows||[];liveResultState.invoiceRows=liveResultState.rows;liveResultState.feesRows=liveResultState.rows;
+  enrichRows();renderDashboard();renderRevenue();renderCost();document.querySelector('[data-page="dashboard"]')?.click();
 };
 document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>ensureCompactMigrationV36().then(()=>refreshAnnualSelectors()).catch(console.error),1800));
+})();

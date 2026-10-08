@@ -1,4 +1,4 @@
-/* NHT Accounting Reconciliation V3.26 - 2026-10-08 */
+/* NHT Accounting Reconciliation V3.27 - 2026-10-08 */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -27,10 +27,13 @@ function deriveRevenue(r){
   // Phí vận chuyển có thể lặp ở nhiều dòng SKU, parser chỉ lấy 1 lần/order bằng maxAbs.
   const original=n(r.sku_revenue)+n(r.order_shipping_buyer);
   const fullReturn=isFullReturnOrder(r);
-  const hasReturn=n(r.return_qty)>0;
-  const returnGoods=Math.min(Math.abs(n(r.return_revenue_estimate)),Math.abs(n(r.sku_revenue)));
+  const qty=n(r.qty),ret=n(r.return_qty),hasReturn=ret>0;
+  const exactReturnGoods=Math.abs(n(r.return_revenue_estimate));
+  const fallbackReturnGoods=(qty>0&&ret>0)?Math.abs(n(r.sku_revenue))*(Math.min(ret,qty)/qty):0;
+  const returnGoods=Math.min(exactReturnGoods>tol()?exactReturnGoods:fallbackReturnGoods,Math.abs(n(r.sku_revenue)));
+  const adjustmentMethod=exactReturnGoods>tol()?'THEO SKU TRẢ':'THEO TỶ LỆ SL TRẢ/TỔNG SL';
   // Hoàn toàn bộ: điều chỉnh toàn bộ doanh thu, gồm cả VC người mua.
-  // Hoàn một phần: điều chỉnh phần hàng trả theo từng dòng SKU; chưa tự giảm VC người mua.
+  // Hoàn một phần: ưu tiên giá trị từng SKU trả; nếu dữ liệu lưu cũ chưa có chi tiết SKU thì fallback theo tỷ lệ SL trả/Tổng SL.
   const expectedAdj=fullReturn ? -original : (hasReturn ? -returnGoods : 0);
   const current=original+expectedAdj;
 
@@ -55,7 +58,8 @@ function deriveRevenue(r){
     effective,
     firstDiff:first-original,
     currentDiff:effective-current,
-    fullReturn
+    fullReturn,
+    adjustmentMethod
   };
 }
 function incomeRevenue(r){return n(r.seller_revenue)+n(r.seller_refund)+n(r.buyer_shipping_income)+n(r.buyer_shipping_refund)}
@@ -82,8 +86,8 @@ function revenueVarianceReason(r){
     else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh chưa bằng giá trị cần điều chỉnh của đơn hoàn toàn bộ');
   }else if(n(r.return_qty)>0){
     const q=n(r.qty),ret=n(r.return_qty);
-    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Hoàn một phần '+ret+'/'+q+' sản phẩm; HĐ cần điều chỉnh dự kiến '+moneyV(r.v3_expected_adjustment));
-    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh thực tế khác HĐ cần điều chỉnh tính theo số lượng trả');
+    if(abs(n(r.v3_invoice_adjustment))<=T) parts.push('Hoàn một phần '+ret+'/'+q+' sản phẩm; HĐ cần điều chỉnh '+moneyV(r.v3_expected_adjustment)+' ('+d.adjustmentMethod+')');
+    else if(abs(n(r.v3_invoice_adjustment)-n(r.v3_expected_adjustment))>T) parts.push('HĐ điều chỉnh thực tế khác HĐ cần điều chỉnh '+moneyV(r.v3_expected_adjustment)+' ('+d.adjustmentMethod+')');
   }
 
   // Shipping-specific clues.
@@ -154,7 +158,7 @@ function enrich(r){
   r.v3_income_revenue_current=d.incomeCurrent;
   r.v3_orders_income_basis_diff=d.orderCurrent-d.incomeCurrent;
   r.v3_platform_discount_trace=d.incomeCurrent-d.orderCurrent;
-  r.v3_invoice_first=d.first;r.v3_expected_adjustment=d.expectedAdj;r.v3_invoice_adjustment=d.actualAdj;r.v3_invoice_effective=d.effective;
+  r.v3_invoice_first=d.first;r.v3_expected_adjustment=d.expectedAdj;r.v3_adjustment_method=d.adjustmentMethod;r.v3_invoice_adjustment=d.actualAdj;r.v3_invoice_effective=d.effective;
   r.v3_invoice_total_after_adjustment=r.v3_invoice_first+r.v3_invoice_adjustment;
   r.v3_invoice_total_diff=r.v3_invoice_total_after_adjustment-r.v3_revenue_current;
   r.v3_invoice_total_check=Math.abs(r.v3_invoice_total_diff)<=tol()?'KHỚP':(r.v3_invoice_total_diff>0?'DƯ HĐ':'THIẾU HĐ');
@@ -340,7 +344,7 @@ function install(){
  '<div class="card section"><h3>D. Ma trận rủi ro & phương án xử lý</h3><div class="kpis" style="grid-template-columns:repeat(3,minmax(150px,1fr));margin-bottom:10px"><div class="card kpi"><span class="muted">Rủi ro cao</span><b id="v3High">0</b></div><div class="card kpi"><span class="muted">Rủi ro trung bình</span><b id="v3Med">0</b></div><div class="card kpi"><span class="muted">Rủi ro thấp</span><b id="v3Low">0</b></div></div><div class="tablewrap"><table><thead><tr><th>Mã</th><th>Mức</th><th>Số dòng</th><th>Rủi ro cụ thể</th><th>Phương án xử lý</th></tr></thead><tbody id="v3RiskSummary"></tbody></table></div></div>'
  ].join('');
  const inv=$('invoice');if(inv)inv.innerHTML=[
- '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. <b>Doanh thu phải xuất HĐ lấy từ file Tất cả đơn hàng</b> = Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua; Income chỉ dùng cho đối chiếu chi phí/quyết toán. Với đơn hoàn, <b>HĐ cần điều chỉnh</b> được tính từ số lượng trả theo từng dòng SKU: giá trị hàng của dòng × SL trả / SL bán. Hoàn toàn bộ thì điều chỉnh toàn bộ doanh thu; hoàn một phần thì chỉ điều chỉnh phần hàng trả, chưa tự giảm phí VC người mua.</div></div>',
+ '<div class="card section"><h2>Đối chiếu doanh thu & hóa đơn</h2><div class="muted">Bảng chính chỉ giữ các chỉ tiêu cần kiểm tra nhanh. <b>Doanh thu phải xuất HĐ lấy từ file Tất cả đơn hàng</b> = Tổng phụ sau giảm giá của người bán + phí vận chuyển người mua; Income chỉ dùng cho đối chiếu chi phí/quyết toán. Với đơn hoàn, <b>HĐ cần điều chỉnh</b> ưu tiên tính theo từng dòng SKU: giá trị hàng của dòng × SL trả / SL bán. Nếu dữ liệu kỳ cũ chưa lưu chi tiết giá trị trả theo SKU, app tự fallback theo <b>Tổng giá trị hàng × Tổng SL trả / Tổng SL bán</b> để không còn hiện 0. Hoàn toàn bộ thì điều chỉnh toàn bộ doanh thu; hoàn một phần chưa tự giảm phí VC người mua.</div></div>',
  '<div class="card section"><div class="toolbar"><input id="v3RevSearch" placeholder="Order ID / số HĐ" oninput="v3ApplyRevenue()"><select id="v3RevStatus" onchange="v3ApplyRevenue()"><option value="">Tất cả trạng thái HĐ</option></select><select id="v3RevRisk" onchange="v3ApplyRevenue()"><option value="">Tất cả rủi ro</option><option>CAO</option><option>TRUNG BÌNH</option><option>THẤP</option></select><button class="btn primary" onclick="v3ExportRevenue()">Xuất Excel</button><span id="v3RevCount" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>Order ID</th><th>Ngày tạo đơn</th><th>Trạng thái đơn</th><th>Ngày giao</th><th>Doanh thu phải xuất HĐ</th><th>HĐ đã xuất</th><th>HĐ cần điều chỉnh</th><th>HĐ điều chỉnh thực tế</th><th>Chênh lệch HĐ</th><th>Kết quả</th><th>Rủi ro</th><th>Lý do chênh lệch</th><th>Gợi ý xử lý</th></tr></thead><tbody id="v3RevenueBody"></tbody></table></div><div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px"><button class="btn" onclick="v3RevPrev()">← Trước</button><span id="v3RevPage" class="muted"></span><button class="btn" onclick="v3RevNext()">Sau →</button></div></div>'
  ].join('');
  const fees=$('fees');if(fees)fees.innerHTML=[
